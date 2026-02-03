@@ -1,0 +1,9 @@
+"""Centralized constants to avoid magic numbers across layers."""
+
+DASHBOARD_PORT = 29999
+SCRIPT_PORT = 30002
+RTDE_RECEIVE_PORT = 30004
+RTDE_CONTROL_PORT = 30004
+
+DEFAULT_DO_INDEX = 7
+DEFAULT_MODBUS_EXTRUDER = "MODBUS_1"

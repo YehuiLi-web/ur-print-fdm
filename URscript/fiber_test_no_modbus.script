@@ -1,0 +1,41 @@
+def fiber_line_test():
+  # 定义特征平面
+  global feature1 = p[0.139279, 0.300521, 0.153100, -0.000708, -0.016293, 0.000060]
+  # 设置工具中心点 (TCP)
+  set_tcp(p[0.001760, 0.003790, 0.162720, 0.000000, 0.000000, 0.000000])
+  
+  # 定义速度和加速度参数 (测试时用较快速度)
+  global speed_g0 = 0.01
+  global acceleration = 0.3
+  
+  # 提取公用的姿态 (Rx, Ry, Rz) 和 Z高度
+  local rot = [1.911, -2.482, 0.0050000] 
+  local z_h = 0.0032
+
+  # 定义通用移动参数
+  local a_val = acceleration
+  local v_val = speed_g0
+  local r_val = 0.000000
+
+  # 打印开始信息
+  textmsg("fiber_line_test 开始执行")
+  
+  # --- 测试：只执行前两段移动 ---
+  # 第1段：直线
+  textmsg("执行第1段移动")
+  movel(pose_trans(feature1, p[-0.04, -0.05, z_h, rot[0], rot[1], rot[2]]), a=a_val, v=v_val, r=r_val)
+  
+  # 注释掉 modbus 调用，用 textmsg 替代
+  # modbus_set_output_register(_mb, 4133)
+  textmsg("原本这里会调用 modbus")
+  sleep(0.5)
+  
+  # 第2段：直线
+  textmsg("执行第2段移动")
+  movel(pose_trans(feature1, p[-0.04, 0.035, z_h, rot[0], rot[1], rot[2]]), a=a_val, v=v_val, r=r_val)
+  
+  textmsg("fiber_line_test 执行完成")
+end
+
+# 调用函数
+fiber_line_test()

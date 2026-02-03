@@ -1,0 +1,52 @@
+def job_teach_calc():
+  global p_bot = p[-0.48590, 0.10820, 0.13518, 3.095, 2.230, 2.136]
+  global p_mid = p[-0.48610, 0.10967, 0.29930, 3.095, 2.230, 2.136]
+  global p_top = p[-0.48589, 0.11097, 0.42860, 3.095, 2.230, 2.136]
+  global v_print = 0.0038
+  global acc = 0.5
+  global blend_r = 0.005
+  
+  movep(p_bot, a=acc, v=0.03)
+  sleep(0.5)
+  modbus_set_output_register("MODBUS_1", 4112)
+  sleep(2)
+  local i = 0
+  while (i < 124):
+
+    # === 1. Upward (Calc: pin=14988, bu=38517) ===
+    modbus_set_output_register("pin", 14988)
+    sleep(0.1)
+    modbus_set_output_register("bu", 38517)
+    #movep(p_mid, a=acc, v=v_print, r=blend_r)
+    movep(p_top, a=acc, v=v_print)
+    modbus_set_output_register("bu", 0)
+    sleep(0.1)
+
+    # === 2. Top Index ===
+    modbus_set_output_register("pin", 14988)
+    sleep(0.1)
+    modbus_set_output_register("bu", 400)
+    sleep(0.6415396952686447)
+    modbus_set_output_register("bu", 0)
+    sleep(0.1)
+
+    # === 3. Downward (Calc: pin=24988, bu=38517) ===
+    modbus_set_output_register("pin", 24988)
+    sleep(0.1)
+    modbus_set_output_register("bu", 38517)
+    movep(p_mid, a=acc, v=v_print, r=blend_r)
+    movep(p_bot, a=acc, v=v_print)
+    modbus_set_output_register("bu", 0)
+    sleep(0.1)
+
+    # === 4. Bottom Index ===
+    modbus_set_output_register("pin", 14988)
+    sleep(0.1)
+    modbus_set_output_register("bu", 80)
+    sleep(0.6415396952686447)
+    modbus_set_output_register("bu", 0)
+    sleep(0.1)
+    i = i + 1
+  end
+end
+job_teach_calc()

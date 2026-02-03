@@ -1,0 +1,23 @@
+def fiber_line():
+  # 定义特征平面
+  global feature1 = p[0.139279, 0.300521, 0.153100, -0.000708, -0.016293, 0.000060]
+  # 设置工具中心点 (TCP)
+  set_tcp(p[0, 0, 0, 0.000000, 0.000000, 0.000000])
+  
+  # 定义速度和加速度参数
+  global speed_g0 = 0.005000
+  global acceleration = 0.300000
+  
+  # 提取公用的姿态 (Rx, Ry, Rz) 和 Z高度，避免代码过于冗长且易错
+  local rot = [0, 3.14, 0] 
+  local z_h = 0.0032
+
+  # 定义通用移动参数
+  local a_val = acceleration
+  local v_val = speed_g0
+  local r_val = 0.000000
+  movel(pose_trans(feature1, p[0.001, 0.001, 0.001, rot[0], rot[1], rot[2]]), a=a_val, v=v_val, r=r_val)
+end
+
+# 调用函数
+fiber_line()

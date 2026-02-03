@@ -1,0 +1,53 @@
+def VT350_v2_planar():
+  # === AUTO_INSERTED_COMPLETE_FLAG_RESET ===
+  set_standard_digital_out(7, False)
+  
+  # ===== 基准位姿 / 速度参数 =====
+  global feature1 = p[0.139279, 0.300521, 0.153100, -0.000708, -0.016293, 0.000060]
+  set_tcp(p[0.001760, 0.003790, 0.162720, 0.000000, 0.000000, 0.000000])
+  global speed_g0 = 0.050000
+  global speed_g2 = 0.005000
+  global speed_g2_sup = 0.005000
+  global acceleration = 0.300000
+  _mb = "MODBUS_1"
+  # 体积匹配挤出：
+  #   主体 vE = (1.330 mm/s) * flow_factor(1.000) = 1.330 mm/s -> reg 4133
+  #   支撑 vE = (1.330 mm/s) * flow_factor(1.000) = 1.330 mm/s -> reg 4133
+
+  # ---- SEG 0 : TRAVEL (3 pts) ----
+  movep(pose_trans(feature1, p[0.048800,0.048800,0.001000,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g0, r=0.0)
+  movep(pose_trans(feature1, p[0.048800,0.048800,0.000800,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g0, r=0.0)
+
+  # ===== LAYER 1 : Z=0.800 mm =====
+  # ---- SEG 1 : PRINT (4 pts) ----
+  modbus_set_output_register(_mb, 4133)
+  sleep(0.500)
+  movep(pose_trans(feature1, p[-0.048800,0.048800,0.000800,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g2, r=0.0)
+  movep(pose_trans(feature1, p[0.048800,0.048800,0.000800,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g2, r=0.0)
+  modbus_set_output_register(_mb, 3000)
+  sleep(0.200)
+
+  # ---- SEG 2 : TRAVEL (2 pts) ----
+  movep(pose_trans(feature1, p[0.048930,0.048930,0.000800,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g0, r=0.0)
+  movep(pose_trans(feature1, p[0.049600,0.049600,0.000800,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g0, r=0.0)
+
+  # ---- SEG 3 : PRINT (4 pts) ----
+  modbus_set_output_register(_mb, 4133)
+  sleep(0.500)
+  movep(pose_trans(feature1, p[0.049600,-0.049600,0.000800,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g2, r=0.0)
+  movep(pose_trans(feature1, p[-0.049600,-0.049600,0.000800,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g2, r=0.0)
+  modbus_set_output_register(_mb, 3000)
+  sleep(0.200)
+
+  # ---- SEG 4 : TRAVEL (1 pts) ----
+  movep(pose_trans(feature1, p[0.049600,0.049400,0.000800,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g0, r=0.0)
+
+  # ---- SEG 5 : TRAVEL (4 pts) ----
+  movep(pose_trans(feature1, p[0.048040,-0.048040,0.000800,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g0, r=0.0)
+  modbus_set_output_register(_mb, 3000)
+  sleep(0.200)
+  movep(pose_trans(feature1, p[-0.027933,0.041762,0.053200,1.911000,-2.482000,0.005000]), a=acceleration, v=speed_g2, r=0.0)
+  # === AUTO_INSERTED_COMPLETE_FLAG ===
+  set_standard_digital_out(7, True)
+end
+VT350_v2_planar()

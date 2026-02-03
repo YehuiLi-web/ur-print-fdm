@@ -1,0 +1,174 @@
+def job_print():
+  # ================= 1. 基础设置 =================
+  global feature1 = p[-0.489651, 0.132993, 0.156, -0.019593, 0.001936, -1.570457]
+  set_tcp(p[0.00941, 0.01059, 0.16079, 0.000000, 0.000000, 0.000000])
+
+  # ================= 2. 打印参数 =================
+  local line_width = 0.001
+  local layer_h    = 0.0005
+  local p_len      = 0.05
+  
+  local count_lines  = 1
+  local count_layers =2
+  
+  # 运动参数
+  local v_print = 0.016
+  local v_1 = 0.05
+  local acc     = 0.5
+  
+  # === 新增：转角停顿时间 (秒) ===
+  # 如果觉得停太久，可以改为 0.1 或 0.2
+  local corner_wait = 0.5 
+
+# ================= 3. 姿态计算 (核心修改) =================
+  # 基础垂直姿态
+  local p_vert_ref = p[0, 0, 0, 2.248, -2.259, 0.049]
+  
+  # 定义倾斜角度 (30度)
+  local tilt_rad = d2r(30)
+  
+  # --- 计算去程姿态 (+30度) ---
+  # 绕 y 轴旋转 +30
+  local rot_offset_fwd = p[0, 0, 0, 0,tilt_rad, 0]
+  local p_pose_fwd = pose_trans(p_vert_ref, rot_offset_fwd)
+  # 提取去程的旋转矢量
+  local rx_f = p_pose_fwd[3]
+  local ry_f = p_pose_fwd[4]
+  local rz_f = p_pose_fwd[5]
+
+  # --- 计算回程姿态 (-30度) ---
+  # 绕 y 轴旋转 -30
+  local rot_offset_bwd = p[0, 0, 0, 0,-tilt_rad, 0]
+  local p_pose_bwd = pose_trans(p_vert_ref, rot_offset_bwd)
+  # 提取回程的旋转矢量
+  local rx_b = p_pose_bwd[3]
+  local ry_b = p_pose_bwd[4]
+  local rz_b = p_pose_bwd[5]
+
+  # ================= 4. 计算居中偏移量 =================
+  local total_width = count_lines * line_width
+  local x_start_offset = -(total_width / 2.0)
+  local y_start_offset = -(p_len / 2.0)
+  local y_end_offset   = (p_len / 2.0)
+
+  # ================= 5. 执行逻辑 =================
+  
+# ================= 5. 执行逻辑 (修改版：蛇形层叠) =================
+  
+  # 初始移动到第一层的第一点 (仅在程序刚开始时执行一次)
+  movej(pose_trans(feature1, p[x_start_offset, y_start_offset, layer_h, rx_f, ry_f, rz_f]), a=1.0, v=0.05)
+
+  local layer_idx = 0
+  while (layer_idx < count_layers):
+    
+    local z_curr = (layer_idx + 1) * layer_h
+    # 判断当前是否为倒序层 (奇数层：1, 3, 5...)
+    local is_odd_layer = ((layer_idx % 2) != 0)
+    
+    local step_idx = 0
+    while (step_idx < count_lines):
+      
+      # --- 1. 计算当前实际上是第几条线 (物理位置) ---
+      local real_line_idx = step_idx
+      if (is_odd_layer):
+        real_line_idx = (count_lines - 1) - step_idx
+      end
+      
+      local x_curr = x_start_offset + (real_line_idx * line_width)
+
+      # --- 2. 判断打印方向 ---
+      # 正常逻辑：偶数线号(0,2...)向前(Fwd)，奇数线号(1,3...)向后(Bwd)
+      # 蛇形逻辑：如果是倒序层(Odd Layer)，这个方向需要反转，才能接上上一层的终点
+      local is_fwd_dir = ((real_line_idx % 2) == 0)
+      if (is_odd_layer):
+        is_fwd_dir = not is_fwd_dir
+      end
+
+      # --- 3. 动作执行分支 ---
+      
+      if (step_idx == 0):
+        # === 每一层的"第一步" (层间衔接) ===
+        # 此时机器人位于上一层的终点 (或初始点)。
+        # 因为我们采用了蛇形逻辑，X和Y坐标理论上已经对齐了，只需要提升Z轴。
+        
+        if (is_fwd_dir):
+          # 这一层的第一条线是 Forward (Start -> End)
+          # 1. 提升Z并对齐姿态 (Start点, Fwd姿态)
+          local p_start = pose_trans(feature1, p[x_curr, y_start_offset, z_curr, rx_f, ry_f, rz_f])
+          movel(p_start, a=acc, v=v_print) 
+          sleep(corner_wait)
+          
+          # 2. 打印 (Start -> End)
+          local p_end = pose_trans(feature1, p[x_curr, y_end_offset, z_curr, rx_f, ry_f, rz_f])
+          movel(p_end, a=acc, v=v_print)
+          # 3. 预旋转 (End处变为 Bwd姿态)
+          local p_rot = pose_trans(feature1, p[x_curr, y_end_offset, z_curr, rx_b, ry_b, rz_b])
+          movel(p_rot, a=acc, v=v_1)
+          sleep(corner_wait)
+          
+        else:
+          # 这一层的第一条线是 Backward (End -> Start)
+          # 1. 提升Z并对齐姿态 (End点, Bwd姿态)
+          local p_start = pose_trans(feature1, p[x_curr, y_end_offset, z_curr, rx_b, ry_b, rz_b])
+          movel(p_start, a=acc, v=v_print)
+          sleep(corner_wait)
+          
+          # 2. 打印 (End -> Start)
+          local p_end = pose_trans(feature1, p[x_curr, y_start_offset, z_curr, rx_b, ry_b, rz_b])
+          movel(p_end, a=acc, v=v_print)
+          # 3. 预旋转 (Start处变为 Fwd姿态)
+          local p_rot = pose_trans(feature1, p[x_curr, y_start_offset, z_curr, rx_f, ry_f, rz_f])
+          movel(p_rot, a=acc, v=v_1)
+          sleep(corner_wait)
+        end
+
+      elif (is_fwd_dir):
+        # === 层内衔接：去程 (Forward: Start -> End) ===
+        # 此时在上一直线的起点 (y_start), 姿态 Bwd
+        
+        # 1. 横移 + 旋转 (变为 Fwd 姿态)
+        local p_shift = pose_trans(feature1, p[x_curr, y_start_offset, z_curr, rx_f, ry_f, rz_f])
+        movel(p_shift, a=acc, v=v_print)
+        sleep(corner_wait)
+        
+        # 2. 直行
+        local p_run = pose_trans(feature1, p[x_curr, y_end_offset, z_curr, rx_f, ry_f, rz_f])
+        movel(p_run, a=acc, v=v_print)
+        # 3. 预旋转
+        local p_rot = pose_trans(feature1, p[x_curr, y_end_offset, z_curr, rx_b, ry_b, rz_b])
+        movel(p_rot, a=acc, v=v_1)
+        sleep(corner_wait)
+
+      else:
+        # === 层内衔接：回程 (Backward: End -> Start) ===
+        # 此时在上一直线的终点 (y_end), 姿态 Fwd
+        
+        # 1. 横移 + 旋转 (变为 Bwd 姿态)
+        local p_shift = pose_trans(feature1, p[x_curr, y_end_offset, z_curr, rx_b, ry_b, rz_b])
+        movel(p_shift, a=acc, v=v_print)
+        sleep(corner_wait)
+        
+        # 2. 回行
+        local p_run = pose_trans(feature1, p[x_curr, y_start_offset, z_curr, rx_b, ry_b, rz_b])
+        movel(p_run, a=acc, v=v_print)
+        # 3. 预旋转
+        local p_rot = pose_trans(feature1, p[x_curr, y_start_offset, z_curr, rx_f, ry_f, rz_f])
+        movel(p_rot, a=acc, v=v_1)
+        sleep(corner_wait)
+      end
+      
+      step_idx = step_idx + 1
+    end
+    layer_idx = layer_idx + 1
+  end
+
+  # ================= 6. 结束 =================
+  # 抬起 (保持最后的姿态)
+  # 这里为了防止姿态错乱，用 get_actual_tcp_pose 保持当前姿态只抬高Z
+  local p_current = get_actual_tcp_pose()
+  local p_lift = pose_trans(p_current, p[0,0,0.05,0,0,0]) 
+  # 注意：由于 pose_trans 是基于当前TCP坐标系的，z方向是沿着工具方向
+  # 如果想垂直于地面的抬起，建议回到 feature1 上方：
+  movel(pose_trans(feature1, p[0, 0, 0.08, rx_f, ry_f, rz_f]), a=0.5, v=0.05)
+end
+job_print()

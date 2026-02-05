@@ -1465,3 +1465,113 @@ class URDriver:
         except Exception as e:
             logging.error(f"is_program_running failed: {e}")
             return False
+
+    # === rtde_control 存活检测与恢复 ===
+
+    def get_runtime_state(self) -> int:
+        """
+        获取机器人运行时状态
+        :return: 状态码 (0=STOPPING, 1=STOPPED, 2=PLAYING, 3=PAUSING, 4=PAUSED, 5=RESUMING)
+                 返回 -1 表示获取失败
+        """
+        with self._lock:
+            if not self.rr:
+                return -1
+            rr_ref = self.rr
+        try:
+            return rr_ref.getRuntimeState()
+        except Exception as e:
+            logging.error(f"get_runtime_state failed: {e}")
+            return -1
+
+    def is_rtde_control_alive(self, timeout: float = 2.0) -> tuple:
+        """
+        检测 rtde_control 后台脚本是否还在运行
+
+        检测方法：
+        1. 检查 rc.isConnected()
+        2. 检查 runtime_state (1=STOPPED 表示无脚本运行)
+        3. 尝试执行 stopJ 并设置超时
+
+        :param timeout: stopJ 测试的超时时间（秒）
+        :return: (alive: bool, detail: str)
+        """
+        with self._lock:
+            if not self.rc:
+                return False, "控制接口未创建"
+            if not self.rc.isConnected():
+                return False, "控制接口连接已断开"
+            rc_ref = self.rc
+            rr_ref = self.rr
+
+        # 方法1：检查 runtime_state
+        if rr_ref:
+            try:
+                runtime_state = rr_ref.getRuntimeState()
+                state_names = {0: "STOPPING", 1: "STOPPED", 2: "PLAYING",
+                              3: "PAUSING", 4: "PAUSED", 5: "RESUMING"}
+                state_name = state_names.get(runtime_state, f"UNKNOWN({runtime_state})")
+
+                if runtime_state == 1:  # STOPPED - 没有脚本在运行
+                    return False, f"runtime_state={state_name} (无脚本运行)"
+            except Exception as e:
+                logging.debug(f"getRuntimeState 异常: {e}")
+
+        # 方法2：尝试执行 stopJ 测试响应
+        result = [None]
+        error = [None]
+
+        def try_stopj():
+            try:
+                # stopJ(2.0) - 2.0 是减速度，在静止状态下几乎没有副作用
+                result[0] = rc_ref.stopJ(2.0)
+            except Exception as e:
+                error[0] = e
+
+        t = threading.Thread(target=try_stopj, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+
+        if t.is_alive():
+            return False, "stopJ 超时 (rtde_control 可能无响应)"
+
+        if error[0]:
+            err_str = str(error[0]).lower()
+            if "timeout" in err_str or "not running" in err_str:
+                return False, f"rtde_control 无响应: {error[0]}"
+            return False, f"stopJ 异常: {error[0]}"
+
+        if result[0] is True or result[0] is None:
+            return True, "rtde_control 正常响应"
+        else:
+            return False, f"stopJ 返回 {result[0]} (rtde_control 可能已停止)"
+
+    def ensure_rtde_control(self, log_callback=None) -> bool:
+        """
+        确保 rtde_control 可用，如果失效则自动重连
+
+        :param log_callback: 日志回调函数
+        :return: True 如果 rtde_control 可用，False 如果重连失败
+        """
+        def log(msg):
+            if log_callback:
+                log_callback(msg)
+            else:
+                logging.info(msg)
+
+        alive, detail = self.is_rtde_control_alive()
+
+        if alive:
+            return True
+
+        log(f"检测到 rtde_control 失效: {detail}")
+        log("正在重连控制接口...")
+
+        success = self.reconnect_control_interface(log_callback)
+
+        if success:
+            log("rtde_control 已恢复")
+            return True
+        else:
+            log("rtde_control 重连失败")
+            return False

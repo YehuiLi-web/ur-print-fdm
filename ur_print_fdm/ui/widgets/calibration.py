@@ -7,7 +7,7 @@ from typing import Optional, List, Tuple
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGroupBox, QFormLayout,
                              QLabel, QGridLayout, QPushButton, QListWidget, QTextEdit,
                              QMessageBox, QApplication, QTabWidget, QSpinBox, QDoubleSpinBox,
-                             QCheckBox, QProgressBar)
+                             QCheckBox, QProgressBar, QLineEdit)
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 
@@ -428,13 +428,18 @@ class AutoCalibrationWidget(QWidget, ThemeAwareMixin):
         self.btn_fit.setStyleSheet(StyleFactory.get_style("button_accent"))
         self.btn_fit.clicked.connect(self._fit_plane)
         result_layout.addWidget(self.btn_fit)
-        
+
         self.txt_result = QTextEdit()
         self.txt_result.setReadOnly(True)
         self.txt_result.setFont(QFont("Consolas", 10))
         self.txt_result.setPlaceholderText("至少采集 3 个点后点击拟合...")
         result_layout.addWidget(self.txt_result)
-        
+
+        # 保存到 Feature 库按钮
+        self.btn_save_to_lib = QPushButton("保存到 Feature 库")
+        self.btn_save_to_lib.clicked.connect(self._save_to_library)
+        result_layout.addWidget(self.btn_save_to_lib)
+
         grp_result.setLayout(result_layout)
         right_vbox.addWidget(grp_result)
         
@@ -478,6 +483,33 @@ class AutoCalibrationWidget(QWidget, ThemeAwareMixin):
             QMessageBox.warning(self, "警告", "请先连接机器人！")
             return False
         return True
+
+    def _ensure_rtde_control_ready(self) -> bool:
+        """
+        确保 rtde_control 可用，失效时自动重连
+        :return: True 如果可用，False 如果不可用
+        """
+        alive, detail = self.main.driver.is_rtde_control_alive()
+        if alive:
+            return True
+
+        # rtde_control 失效，尝试重连
+        self.main.log(f"检测到 rtde_control 失效: {detail}")
+        self.main.log("正在重连控制接口...")
+
+        success = self.main.driver.reconnect_control_interface(self.main.log)
+
+        if success:
+            self.main.log("rtde_control 已恢复")
+            return True
+        else:
+            QMessageBox.warning(self, "控制接口失效",
+                "rtde_control 重连失败。\n\n"
+                "可能原因：\n"
+                "1. 示教器正在运行程序\n"
+                "2. 机器人处于保护停止状态\n\n"
+                "请确保示教器处于空闲状态后重试。")
+            return False
     
     def _zero_ft_sensor(self):
         if not self._check_connection():
@@ -497,6 +529,8 @@ class AutoCalibrationWidget(QWidget, ThemeAwareMixin):
     def _do_single_probe(self):
         if not self._check_connection():
             return
+        if not self._ensure_rtde_control_ready():
+            return
         self._update_config()
         self._set_buttons_enabled(False)
         
@@ -514,6 +548,8 @@ class AutoCalibrationWidget(QWidget, ThemeAwareMixin):
     
     def _do_probe_and_add(self):
         if not self._check_connection():
+            return
+        if not self._ensure_rtde_control_ready():
             return
         self._update_config()
         self._set_buttons_enabled(False)
@@ -575,6 +611,8 @@ class AutoCalibrationWidget(QWidget, ThemeAwareMixin):
     def _do_retract(self):
         if not self._check_connection():
             return
+        if not self._ensure_rtde_control_ready():
+            return
         self._do_retract_silent()
         self.main.log(f"回退 {self.config.retract_distance*1000:.1f} mm")
     
@@ -617,18 +655,227 @@ class AutoCalibrationWidget(QWidget, ThemeAwareMixin):
 
         feat_str, log = self.main.print_lib.fit_plane_feature(points_mm)
         if feat_str:
+            self._last_feature = feat_str  # 保存最后一次结果
             self.txt_result.setText("拟合成功!\n\n" + log)
             self.txt_result.append("\n=== URScript 代码 ===")
             self.txt_result.append(f"global feature1 = {feat_str}")
             QApplication.clipboard().setText(feat_str)
             self.main.log("自动标定成功，Feature 字符串已复制到剪贴板。")
         else:
+            self._last_feature = None
             self.txt_result.setText("拟合失败\n" + log)
+
+    def _save_to_library(self):
+        """快捷保存到 Feature 库"""
+        if not hasattr(self, '_last_feature') or not self._last_feature:
+            QMessageBox.warning(self, "无数据", "请先完成标定拟合")
+            return
+
+        # 获取 CalibrationWidget（父容器）
+        parent = self.parent()
+        while parent and not isinstance(parent, CalibrationWidget):
+            parent = parent.parent()
+
+        if parent and hasattr(parent, 'feature_lib_widget'):
+            # 填入 Feature 并切换到 Feature 库 Tab
+            parent.feature_lib_widget.set_feature_for_save(self._last_feature)
+            parent.tab_widget.setCurrentWidget(parent.feature_lib_widget)
+            self.main.log("请在 Feature 库中输入名称和描述后保存")
+        else:
+            QMessageBox.warning(self, "错误", "无法找到 Feature 库页面")
+
+
+# ================= Feature 库管理页面 =================
+class FeatureLibraryWidget(QWidget, ThemeAwareMixin):
+    """Feature 库管理页面 - 保存和加载标定结果"""
+
+    def __init__(self, main_window):
+        super().__init__()
+        self.setup_theme_awareness()
+        self.main = main_window
+        self.features = {}
+        self._init_ui()
+        self._load_features()
+
+    def _init_ui(self):
+        layout = QHBoxLayout(self)
+
+        # === 左栏：Feature 列表 ===
+        left_panel = QWidget()
+        left_vbox = QVBoxLayout(left_panel)
+
+        grp_list = QGroupBox("已保存的 Feature")
+        list_layout = QVBoxLayout()
+        self.feature_list = QListWidget()
+        self.feature_list.currentRowChanged.connect(self._on_selection_changed)
+        list_layout.addWidget(self.feature_list)
+
+        # 操作按钮
+        btn_row = QHBoxLayout()
+        self.btn_delete = QPushButton("删除")
+        self.btn_delete.clicked.connect(self._delete_feature)
+        self.btn_copy = QPushButton("复制")
+        self.btn_copy.clicked.connect(self._copy_feature)
+        btn_row.addWidget(self.btn_delete)
+        btn_row.addWidget(self.btn_copy)
+        list_layout.addLayout(btn_row)
+
+        grp_list.setLayout(list_layout)
+        left_vbox.addWidget(grp_list)
+        left_vbox.addStretch()
+        layout.addWidget(left_panel, 1)
+
+        # === 右栏：详情显示 + 新增 ===
+        right_panel = QWidget()
+        right_vbox = QVBoxLayout(right_panel)
+
+        # 详情区域
+        grp_detail = QGroupBox("Feature 详情")
+        detail_layout = QFormLayout()
+        self.lbl_name = QLabel("--")
+        self.lbl_desc = QLabel("--")
+        self.lbl_time = QLabel("--")
+        self.txt_feature = QTextEdit()
+        self.txt_feature.setReadOnly(True)
+        self.txt_feature.setMaximumHeight(80)
+        self.txt_feature.setFont(QFont("Consolas", 10))
+        detail_layout.addRow("名称:", self.lbl_name)
+        detail_layout.addRow("描述:", self.lbl_desc)
+        detail_layout.addRow("创建时间:", self.lbl_time)
+        detail_layout.addRow("Feature:", self.txt_feature)
+        grp_detail.setLayout(detail_layout)
+        right_vbox.addWidget(grp_detail)
+
+        # 新增区域
+        grp_add = QGroupBox("添加 Feature")
+        add_layout = QFormLayout()
+        self.input_name = QLineEdit()
+        self.input_name.setPlaceholderText("例如: 热床_左上")
+        self.input_desc = QLineEdit()
+        self.input_desc.setPlaceholderText("例如: 左上角热床平面")
+        self.input_feature = QLineEdit()
+        self.input_feature.setPlaceholderText("p[x, y, z, rx, ry, rz]")
+        self.btn_add = QPushButton("添加到库")
+        self.btn_add.setStyleSheet(StyleFactory.get_style("button_accent"))
+        self.btn_add.clicked.connect(self._add_feature)
+        add_layout.addRow("名称:", self.input_name)
+        add_layout.addRow("描述:", self.input_desc)
+        add_layout.addRow("Feature:", self.input_feature)
+        add_layout.addRow(self.btn_add)
+        grp_add.setLayout(add_layout)
+        right_vbox.addWidget(grp_add)
+
+        right_vbox.addStretch()
+        layout.addWidget(right_panel, 2)
+
+    def on_theme_changed(self, theme_id: str):
+        if hasattr(self, 'btn_add'):
+            self.btn_add.setStyleSheet(StyleFactory.get_style("button_accent"))
+
+    def _load_features(self):
+        """从配置加载 Feature 列表"""
+        from ur_print_fdm.config import config_manager
+        self.features = config_manager.get("calibration.saved_features", {}) or {}
+        self.feature_list.clear()
+        for name in self.features.keys():
+            self.feature_list.addItem(name)
+        # 清空详情
+        self._clear_detail()
+
+    def _save_features(self):
+        """保存 Feature 列表到配置"""
+        from ur_print_fdm.config import config_manager
+        config_manager.set("calibration.saved_features", self.features)
+        config_manager.save()
+
+    def _clear_detail(self):
+        """清空详情显示"""
+        self.lbl_name.setText("--")
+        self.lbl_desc.setText("--")
+        self.lbl_time.setText("--")
+        self.txt_feature.clear()
+
+    def _on_selection_changed(self, row):
+        """选中项变化时更新详情"""
+        if row < 0:
+            self._clear_detail()
+            return
+        name = self.feature_list.item(row).text()
+        data = self.features.get(name, {})
+        self.lbl_name.setText(name)
+        self.lbl_desc.setText(data.get("description", "无") or "无")
+        self.lbl_time.setText(data.get("created_at", "未知"))
+        self.txt_feature.setText(data.get("feature", ""))
+
+    def _add_feature(self):
+        """添加新 Feature"""
+        import datetime
+
+        name = self.input_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, "错误", "请输入名称")
+            return
+        feature = self.input_feature.text().strip()
+        if not feature:
+            QMessageBox.warning(self, "错误", "请输入 Feature 字符串")
+            return
+
+        # 检查是否已存在
+        if name in self.features:
+            reply = QMessageBox.question(self, "确认覆盖", f"'{name}' 已存在，是否覆盖？")
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        self.features[name] = {
+            "feature": feature,
+            "description": self.input_desc.text().strip(),
+            "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        self._save_features()
+        self._load_features()
+
+        # 清空输入
+        self.input_name.clear()
+        self.input_desc.clear()
+        self.input_feature.clear()
+
+        self.main.log(f"Feature '{name}' 已添加到库")
+
+    def _delete_feature(self):
+        """删除选中的 Feature"""
+        row = self.feature_list.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "提示", "请先选择要删除的 Feature")
+            return
+        name = self.feature_list.item(row).text()
+        reply = QMessageBox.question(self, "确认删除", f"确定删除 '{name}'?")
+        if reply == QMessageBox.StandardButton.Yes:
+            del self.features[name]
+            self._save_features()
+            self._load_features()
+            self.main.log(f"Feature '{name}' 已删除")
+
+    def _copy_feature(self):
+        """复制选中的 Feature 到剪贴板"""
+        row = self.feature_list.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "提示", "请先选择要复制的 Feature")
+            return
+        name = self.feature_list.item(row).text()
+        feature = self.features.get(name, {}).get("feature", "")
+        if feature:
+            QApplication.clipboard().setText(feature)
+            self.main.log(f"Feature '{name}' 已复制到剪贴板")
+
+    def set_feature_for_save(self, feature_str: str):
+        """从外部设置待保存的 Feature（供标定页面调用）"""
+        self.input_feature.setText(feature_str)
+        self.input_name.setFocus()
 
 
 # ================= Tab 容器 =================
 class CalibrationWidget(QWidget, ThemeAwareMixin):
-    """平面标定 Tab 容器 - 包含手动标定和自动标定两个页面"""
+    """平面标定 Tab 容器 - 包含手动标定、自动标定和 Feature 库三个页面"""
 
     def __init__(self, main_window):
         super().__init__()
@@ -650,6 +897,10 @@ class CalibrationWidget(QWidget, ThemeAwareMixin):
         self.auto_widget = AutoCalibrationWidget(self.main)
         self.tab_widget.addTab(self.auto_widget, "自动标定 (力控)")
 
+        # Feature 库页
+        self.feature_lib_widget = FeatureLibraryWidget(self.main)
+        self.tab_widget.addTab(self.feature_lib_widget, "Feature 库")
+
         layout.addWidget(self.tab_widget)
 
     def on_theme_changed(self, theme_id: str):
@@ -658,6 +909,8 @@ class CalibrationWidget(QWidget, ThemeAwareMixin):
             self.manual_widget.on_theme_changed(theme_id)
         if hasattr(self, 'auto_widget'):
             self.auto_widget.on_theme_changed(theme_id)
+        if hasattr(self, 'feature_lib_widget'):
+            self.feature_lib_widget.on_theme_changed(theme_id)
 
     def update_live_tcp(self, tcp, joints):
         """更新实时 TCP 显示（供手动标定使用）"""

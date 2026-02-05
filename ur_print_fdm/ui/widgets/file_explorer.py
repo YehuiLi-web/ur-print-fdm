@@ -39,12 +39,12 @@ class DeleteConfirmationDialog(QDialog):
 
         # 分隔线
         from PyQt6.QtWidgets import QFrame
-        from ur_print_fdm.ui import theme
+        from ur_print_fdm.ui.theme_manager import get_theme_manager
 
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFixedHeight(1)
-        line.setStyleSheet(f"background-color: {theme.current_tokens().get('border_light', '#3C3C3C')};")
+        line.setStyleSheet(f"background-color: {get_theme_manager().current_tokens().get('border_light', '#3C3C3C')};")
         layout.addWidget(line)
 
         # 按钮

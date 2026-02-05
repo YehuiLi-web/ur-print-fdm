@@ -100,6 +100,8 @@ class IconManager:
         Args:
             icon_name: SVG图标名称（如 'tree_expand', 'tree_collapse'）
             size: 图标尺寸，默认为 (16, 16)
+            color: 自定义颜色（可选）
+            tint: 是否着色（默认True）
 
         Returns:
             QIcon: SVG图标对象
@@ -111,9 +113,11 @@ class IconManager:
         effective_color = color
         if tint and not effective_color:
             try:
-                from ur_print_fdm.ui import theme
+                # 使用新的ThemeManager获取令牌
+                from ur_print_fdm.ui.theme_manager import get_theme_manager
 
-                t = theme.current_tokens()
+                theme_mgr = get_theme_manager()
+                t = theme_mgr.current_tokens()
                 effective_color = str(t.get("icon") or t.get("text_muted") or t.get("text") or "#d4d4d4")
             except Exception:
                 effective_color = "#d4d4d4"
@@ -289,3 +293,29 @@ def get_action_icon(action_name: str) -> QIcon:
 def get_svg_icon(icon_name: str, size: tuple = (16, 16)) -> QIcon:
     """获取SVG图标的便捷函数"""
     return IconManager.get_svg_icon(icon_name, size)
+
+
+# === 主题集成：订阅主题变更信号 ===
+_theme_listener_initialized = False
+
+
+def _init_theme_listener():
+    """初始化主题监听器，在主题变更时自动清除图标缓存"""
+    global _theme_listener_initialized
+    if _theme_listener_initialized:
+        return
+
+    try:
+        from ur_print_fdm.ui.theme_manager import get_theme_manager
+
+        theme_mgr = get_theme_manager()
+        # 订阅主题变更，自动清除缓存
+        theme_mgr.add_listener(lambda _: IconManager.clear_cache())
+        _theme_listener_initialized = True
+    except Exception:
+        # 如果ThemeManager还未初始化，忽略错误
+        pass
+
+
+# 不在模块加载时初始化，而是延迟到第一次使用时
+# _init_theme_listener()  # 注释掉自动初始化

@@ -1,170 +1,21 @@
 """
-主题与设计令牌 - 向后兼容层
-统一管理颜色、字号、间距，确保全局 UI 风格一致
-
-注意：此文件保留用于向后兼容。
-新代码请使用 ur_print_fdm.ui.theme_manager.ThemeManager
+QSS样式表生成器
+基于主题令牌生成完整的QSS样式表
 """
 
-# 导入新的主题管理器
-from ur_print_fdm.ui.theme_manager import get_theme_manager
-
-# === 设计令牌 (Design Tokens) - 向后兼容 ===
-# 这些全局变量保留用于旧代码，内部从ThemeManager获取
-def _get_dark_tokens():
-    """获取深色主题令牌"""
-    theme_mgr = get_theme_manager()
-    theme = theme_mgr.get_theme("dark")
-    return theme.tokens if theme else {}
-
-def _get_light_tokens():
-    """获取浅色主题令牌"""
-    theme_mgr = get_theme_manager()
-    theme = theme_mgr.get_theme("light")
-    return theme.tokens if theme else {}
-
-# 深色主题（向后兼容）
-DARK = {
-    "bg_main": "#2b2b2b",
-    "bg_secondary": "#1e1e1e",
-    "bg_tertiary": "#252526",
-    "bg_panel": "#2d2d2d",
-    "bg_hover": "#2a2a2a",
-    "bg_hover_strong": "#383838",
-    "border": "#3a3a3e",
-    "border_light": "#46464a",
-    "text": "#e0e0e0",
-    "text_muted": "#8a8a8a",
-    "text_dim": "#6a6a6a",
-    "text_on_accent": "#ffffff",
-    "icon": "#d4d4d4",
-    "accent": "#094771",
-    "accent_hover": "#0e639c",
-    "accent_blue": "#2196F3",
-    "accent_link": "#569CD6",
-    "selection_bg": "#264f78",
-    "primary_green": "#388E3C",
-    "primary_green_hover": "#43A047",
-    "primary_green_pressed": "#2E7D32",
-    "danger": "#D32F2F",
-    "danger_hover": "#E53935",
-    "danger_pressed": "#B71C1C",
-    "danger_checked": "#c62828",
-    "neutral": "#455A64",
-    "neutral_hover": "#546E7A",
-    "neutral_pressed": "#37474F",
-    "success": "#4CAF50",
-    "warning": "#FFA726",
-    "tooltip_bg": "#353535",
-    "tooltip_border": "#4a4a4a",
-    "tooltip_text": "#f0f0f0",
-    "radius": "4px",
-    "radius_lg": "6px",
-    "font_main": '"Segoe UI", "Microsoft YaHei", sans-serif',
-    "font_mono": '"Consolas", "Courier New", monospace',
-    "size_base": "10pt",
-    "size_small": "9pt",
-    "size_large": "11pt",
-    "space_sm": "4px",
-    "space_md": "8px",
-    "space_lg": "12px",
-    # Buttons (generic)
-    "btn_bg": "#3c3c3c",
-    "btn_bg_hover": "#4a4a4a",
-    "btn_bg_pressed": "#2a2a2a",
-    "btn_border": "#505050",
-    "btn_border_hover": "#606060",
-    "btn_text": "#ffffff",
-    "btn_disabled_bg": "#323232",
-    "btn_disabled_border": "#404040",
-    "btn_disabled_text": "#6a6a6a",
-    # Scrollbar handles
-    "scroll_handle": "rgba(121, 121, 121, 0.2)",
-    "scroll_handle_hover": "rgba(121, 121, 121, 0.5)",
-    "scroll_handle_pressed": "rgba(121, 121, 121, 0.7)",
-    # Tree branch icons (QSS cannot tint; pick per-theme assets)
-    "tree_branch_closed_icon": "ur_print_fdm/ui/resources/icons/collapse.svg",
-    "tree_branch_open_icon": "ur_print_fdm/ui/resources/icons/expand.svg",
-}
+from typing import Dict, Any
 
 
-LIGHT = {
-    "bg_main": "#f7f7f9",
-    "bg_secondary": "#ffffff",
-    "bg_tertiary": "#f0f1f3",
-    "bg_panel": "#fbfbfd",
-    "bg_hover": "#eef0f4",
-    "bg_hover_strong": "#e6e8ee",
-    "border": "#d0d7de",
-    "border_light": "#e6e8ee",
-    "text": "#1f2328",
-    "text_muted": "#57606a",
-    "text_dim": "#8c959f",
-    "text_on_accent": "#ffffff",
-    "icon": "#57606a",
-    "accent": "#0969da",
-    "accent_hover": "#0758b8",
-    "accent_blue": "#0969da",
-    "accent_link": "#0969da",
-    "selection_bg": "#cfe8ff",
-    "primary_green": "#2da44e",
-    "primary_green_hover": "#2c974b",
-    "primary_green_pressed": "#238636",
-    "danger": "#cf222e",
-    "danger_hover": "#a40e26",
-    "danger_pressed": "#82071e",
-    "danger_checked": "#cf222e",
-    "neutral": "#6e7781",
-    "neutral_hover": "#5b646e",
-    "neutral_pressed": "#48515a",
-    "success": "#2da44e",
-    "warning": "#bf8700",
-    # Tooltips: keep dark for readability
-    "tooltip_bg": "#1f2328",
-    "tooltip_border": "#3d444d",
-    "tooltip_text": "#f0f0f0",
-    "radius": "4px",
-    "radius_lg": "6px",
-    "font_main": '"Segoe UI", "Microsoft YaHei", sans-serif',
-    "font_mono": '"Consolas", "Courier New", monospace',
-    "size_base": "10pt",
-    "size_small": "9pt",
-    "size_large": "11pt",
-    "space_sm": "4px",
-    "space_md": "8px",
-    "space_lg": "12px",
-    # Buttons (generic)
-    "btn_bg": "#f6f8fa",
-    "btn_bg_hover": "#eef2f6",
-    "btn_bg_pressed": "#e7ebef",
-    "btn_border": "#d0d7de",
-    "btn_border_hover": "#b6bec8",
-    "btn_text": "#1f2328",
-    "btn_disabled_bg": "#f6f8fa",
-    "btn_disabled_border": "#e6e8ee",
-    "btn_disabled_text": "#8c959f",
-    # Scrollbar handles
-    "scroll_handle": "rgba(0, 0, 0, 0.18)",
-    "scroll_handle_hover": "rgba(0, 0, 0, 0.28)",
-    "scroll_handle_pressed": "rgba(0, 0, 0, 0.38)",
-    # Tree branch icons (QSS cannot tint; pick per-theme assets)
-    "tree_branch_closed_icon": "ur_print_fdm/ui/resources/icons/collapse_light.svg",
-    "tree_branch_open_icon": "ur_print_fdm/ui/resources/icons/expand_light.svg",
-}
-
-
-def _dark_theme(t: dict) -> str:
+def generate_qss(t: Dict[str, Any]) -> str:
     """
-    基于设计令牌生成主题 QSS（向后兼容）
+    基于设计令牌生成主题 QSS
 
-    注意：此函数保留用于向后兼容。
-    新代码请使用 ur_print_fdm.ui.themes.qss_generator.generate_qss
+    Args:
+        t: 主题令牌字典
+
+    Returns:
+        完整的QSS样式表字符串
     """
-    from ur_print_fdm.ui.themes.qss_generator import generate_qss
-    return generate_qss(t)
-
-def _dark_theme_legacy(t: dict) -> str:
-    """原始的QSS生成函数（已废弃，保留用于参考）"""
     return f"""
         /* === 全局基础 === */
         QMainWindow, QWidget {{
@@ -327,16 +178,18 @@ def _dark_theme_legacy(t: dict) -> str:
         QComboBox QAbstractItemView {{
             background-color: {t["bg_tertiary"]};
             border: 1px solid {t["border_light"]};
+            border-radius: {t["radius"]};
             color: {t["text"]};
             selection-background-color: {t["accent"]};
             selection-color: {t["text_on_accent"]};
             outline: none;
-            padding: 4px 0;
+            padding: 2px 0;
         }}
         QComboBox QAbstractItemView::item {{
-            padding: 6px 8px;
-            margin: 1px 0;
-            border-radius: {t["radius"]};
+            padding: 5px {t["space_md"]};
+            margin: 0;
+            min-height: 22px;
+            height: 22px;
         }}
         QComboBox QAbstractItemView::item:hover:!selected {{
             background-color: {t["bg_hover"]};
@@ -708,75 +561,3 @@ def _dark_theme_legacy(t: dict) -> str:
             min-width: 80px;
         }}
         """
-
-
-def get_dark_theme() -> str:
-    """
-    应用现代深色工程主题（向后兼容）
-
-    注意：此函数保留用于向后兼容。
-    新代码请使用 ThemeManager.set_theme("dark")
-    """
-    theme_mgr = get_theme_manager()
-    theme = theme_mgr.get_theme("dark")
-    return theme.generate_qss() if theme else ""
-
-
-def get_light_theme() -> str:
-    """
-    浅色主题（向后兼容）
-
-    注意：此函数保留用于向后兼容。
-    新代码请使用 ThemeManager.set_theme("light")
-    """
-    theme_mgr = get_theme_manager()
-    theme = theme_mgr.get_theme("light")
-    return theme.generate_qss() if theme else ""
-
-
-def apply_app_theme(use_dark: bool):
-    """
-    将主题应用到 QApplication（向后兼容）
-
-    注意：此函数保留用于向后兼容。
-    新代码请使用 ThemeManager.set_theme(theme_id)
-
-    Args:
-        use_dark: True使用深色主题，False使用浅色主题
-    """
-    theme_mgr = get_theme_manager()
-    theme_id = "dark" if use_dark else "light"
-    theme_mgr.set_theme(theme_id)
-
-
-# 保留全局变量（用于旧代码）
-_CURRENT_TOKENS = None
-_CURRENT_MODE = "dark"
-
-
-def current_tokens() -> dict:
-    """
-    获取当前主题令牌（向后兼容）
-
-    注意：此函数保留用于向后兼容。
-    新代码请使用 ThemeManager.current_tokens()
-
-    Returns:
-        当前主题的令牌字典
-    """
-    theme_mgr = get_theme_manager()
-    return theme_mgr.current_tokens()
-
-
-# 初始化全局变量
-def _init_legacy_globals():
-    """初始化遗留的全局变量"""
-    global _CURRENT_TOKENS, _CURRENT_MODE
-    theme_mgr = get_theme_manager()
-    _CURRENT_TOKENS = theme_mgr.current_tokens()
-    _CURRENT_MODE = theme_mgr.current_theme_id()
-
-# 延迟初始化，避免循环导入
-# _init_legacy_globals() 将在首次调用 current_tokens() 时自动执行
-
-

@@ -30,10 +30,12 @@ from PyQt6.QtWidgets import (
     QWidget,
     QDialogButtonBox,
     QInputDialog,
+    QListView,
 )
 
 from ur_print_fdm.config import config_manager
 from ur_print_fdm.shared.net import is_valid_ip
+from ur_print_fdm.ui.widgets.combobox_fix import fix_combobox_popup
 
 
 @dataclass(frozen=True)
@@ -226,10 +228,10 @@ class PreferencesDialog(QDialog):
         form_backend = QFormLayout(grp_backend)
 
         backend_combo = QComboBox()
-        backend_combo.setEditable(False)
         backend_ids = sorted(registry.robot_backends.keys())
         backend_combo.addItems(backend_ids)
         backend_combo.setCurrentText(str(self._get("robot.backend_id", "ur_rtde_cb3")))
+        fix_combobox_popup(backend_combo)  # 修复弹出框覆盖问题（必须在 addItems 之后调用）
         backend_combo.currentTextChanged.connect(lambda v: self._set("robot.backend_id", str(v).strip()))
         form_backend.addRow("机器人后端：", backend_combo)
 
@@ -248,12 +250,6 @@ class PreferencesDialog(QDialog):
         chk_auto.stateChanged.connect(lambda _: self._set("robot.auto_reconnect", bool(chk_auto.isChecked())))
         form_conn.addRow(chk_auto)
 
-        spin_speed = QSpinBox()
-        spin_speed.setRange(1, 200)
-        spin_speed.setSuffix(" %")
-        spin_speed.setValue(int(self._get("robot.speed_slider_default", 100) or 100))
-        spin_speed.valueChanged.connect(lambda v: self._set("robot.speed_slider_default", int(v)))
-        form_conn.addRow("速度滑块默认值：", spin_speed)
         root.addWidget(grp_conn)
 
         # ---- IP list ----
@@ -604,6 +600,7 @@ class PreferencesDialog(QDialog):
         chk_dark.setVisible(False)
 
         cmb_theme = QComboBox()
+        fix_combobox_popup(cmb_theme)  # 修复弹出框覆盖问题
         cmb_theme.addItem("暗色（推荐）", True)
         cmb_theme.addItem("白色", False)
         cmb_theme.setCurrentIndex(0 if chk_dark.isChecked() else 1)
@@ -703,6 +700,7 @@ class PreferencesDialog(QDialog):
         form_file = QFormLayout(grp_file)
 
         cmb_level = QComboBox()
+        fix_combobox_popup(cmb_level)  # 修复弹出框覆盖问题
         cmb_level.addItems(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
         cmb_level.setCurrentText(str(self._get("logging.level", "INFO") or "INFO").upper())
         cmb_level.currentTextChanged.connect(lambda v: self._set("logging.level", str(v).upper()))
@@ -739,6 +737,7 @@ class PreferencesDialog(QDialog):
         form_ui = QFormLayout(grp_ui)
 
         cmb_ui = QComboBox()
+        fix_combobox_popup(cmb_ui)  # 修复弹出框覆盖问题
         cmb_ui.addItems(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
         cmb_ui.setCurrentText(str(self._get("logging.ui_level", "INFO") or "INFO").upper())
         cmb_ui.currentTextChanged.connect(lambda v: self._set("logging.ui_level", str(v).upper()))

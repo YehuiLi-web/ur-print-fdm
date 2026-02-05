@@ -1,13 +1,14 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget,
                               QStackedWidget, QTextBrowser, QDialogButtonBox,
                               QLabel, QPushButton, QLineEdit, QComboBox,
-                              QSplitter, QWidget, QFormLayout, QTextEdit, QListWidgetItem)
+                              QSplitter, QWidget, QFormLayout, QTextEdit, QListWidgetItem, QListView, QFrame)
 from ur_print_fdm.ui.widgets.styled_message_box import StyledMessageBox
 from PyQt6.QtCore import Qt, QDateTime, pyqtSignal
 import json
 from pathlib import Path
 from ur_print_fdm.ui.resources.icon_manager import IconManager
 from ur_print_fdm.ui import theme
+from ur_print_fdm.ui.style_factory import StyleFactory
 
 class NoteEditDialog(QDialog):
     """添加/编辑注意事项的对话框"""
@@ -21,27 +22,38 @@ class NoteEditDialog(QDialog):
     
     def init_ui(self):
         self.setWindowTitle("编辑注意事项" if self.note_data else "添加注意事项")
-        self.resize(500, 400)
-        
+        self.resize(600, 500)
+
         layout = QVBoxLayout(self)
-        
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
         form_layout = QFormLayout()
-        
+        form_layout.setSpacing(12)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+
         self.combo_category = QComboBox()
+        category_view = QListView()
+        category_view.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.combo_category.setView(category_view)  # 修复弹出框覆盖问题
         self.combo_category.addItems(self.categories)
+        self.combo_category.setMinimumHeight(32)
         form_layout.addRow("分类:", self.combo_category)
-        
+
         self.edit_title = QLineEdit()
         self.edit_title.setPlaceholderText("请输入问题标题（例如：风扇防拖拽）")
+        self.edit_title.setMinimumHeight(32)
         form_layout.addRow("标题:", self.edit_title)
-        
+
         self.edit_content = QTextEdit()
         self.edit_content.setPlaceholderText("请输入详细内容...")
-        self.edit_content.setMinimumHeight(200)
+        self.edit_content.setMinimumHeight(280)
         form_layout.addRow("内容:", self.edit_content)
-        
+
         layout.addLayout(form_layout)
-        
+
+        layout.addSpacing(8)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.validate_and_save)
         buttons.rejected.connect(self.reject)
@@ -221,73 +233,87 @@ class PrintingNotesDialog(QDialog):
     
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
         # 顶部工具栏
         toolbar = QHBoxLayout()
-        
+        toolbar.setSpacing(8)
+
         icon_mgr = IconManager()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索问题...")
         self.search_edit.setMaximumWidth(300)
+        self.search_edit.setMinimumHeight(32)
         self.search_edit.textChanged.connect(self.on_search_changed)
         search_icon = QLabel()
         search_icon.setPixmap(icon_mgr.get_svg_icon('search', (18, 18)).pixmap(18, 18))
         toolbar.addWidget(search_icon)
         toolbar.addWidget(self.search_edit)
-        
+
         toolbar.addStretch()
-        
+
+        # 视觉分隔符
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.VLine)
+        t = theme.current_tokens()
+        separator.setStyleSheet(f"background-color: {t['border_light']};")
+        separator.setFixedWidth(1)
+        separator.setFixedHeight(24)
+        toolbar.addWidget(separator)
+
         self.btn_add = QPushButton("添加")
         self.btn_add.setIcon(icon_mgr.get_svg_icon('add', (16, 16)))
+        self.btn_add.setStyleSheet(StyleFactory.get_style("button_accent"))
         self.btn_add.clicked.connect(self.add_note)
         toolbar.addWidget(self.btn_add)
-        
+
         self.btn_edit = QPushButton("编辑")
         self.btn_edit.setIcon(icon_mgr.get_svg_icon('edit', (16, 16)))
+        self.btn_edit.setStyleSheet(StyleFactory.get_style("button_neutral"))
         self.btn_edit.clicked.connect(self.edit_note)
         toolbar.addWidget(self.btn_edit)
-        
+
         self.btn_delete = QPushButton("删除")
         self.btn_delete.setIcon(icon_mgr.get_svg_icon('trash', (16, 16)))
+        self.btn_delete.setStyleSheet(StyleFactory.get_style("button_danger"))
         self.btn_delete.clicked.connect(self.delete_note)
         toolbar.addWidget(self.btn_delete)
-        
+
         layout.addLayout(toolbar)
-        
-        # 主体内容区（使用Splitter）
+
+        # 主体内容区（使用单个Splitter，三个面板）
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        
-        # 左侧：分类导航 + 问题列表
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # 分类导航
-        category_splitter = QSplitter(Qt.Orientation.Horizontal)
-        
+        main_splitter.setHandleWidth(1)
+
+        # 左侧：分类导航
         self.category_list = QListWidget()
-        self.category_list.setFixedWidth(150)
+        self.category_list.setMinimumWidth(180)
+        self.category_list.setMaximumWidth(250)
         self.category_list.currentRowChanged.connect(self.on_category_changed)
 
+        # 中间：问题列表
         self.note_list = QListWidget()
+        self.note_list.setMinimumWidth(250)
         self.note_list.currentRowChanged.connect(self.on_note_selected)
-        
-        category_splitter.addWidget(self.category_list)
-        category_splitter.addWidget(self.note_list)
-        category_splitter.setStretchFactor(0, 0)
-        category_splitter.setStretchFactor(1, 1)
-        
-        left_layout.addWidget(category_splitter)
-        
-        # 右侧：问题详情
+
+        # 右侧：问题详情（带容器以添加内边距）
+        detail_container = QWidget()
+        detail_layout = QVBoxLayout(detail_container)
+        detail_layout.setContentsMargins(16, 16, 16, 16)
+        detail_layout.setSpacing(0)
+
         self.detail_browser = QTextBrowser()
         self.detail_browser.setReadOnly(True)
-        
-        main_splitter.addWidget(left_widget)
-        main_splitter.addWidget(self.detail_browser)
-        main_splitter.setStretchFactor(0, 4)
-        main_splitter.setStretchFactor(1, 6)
-        
+        detail_layout.addWidget(self.detail_browser)
+
+        main_splitter.addWidget(self.category_list)
+        main_splitter.addWidget(self.note_list)
+        main_splitter.addWidget(detail_container)
+        main_splitter.setStretchFactor(0, 2)  # 分类: 20%
+        main_splitter.setStretchFactor(1, 3)  # 笔记: 30%
+        main_splitter.setStretchFactor(2, 5)  # 详情: 50%
+
         layout.addWidget(main_splitter)
         
         # 底部按钮
@@ -372,7 +398,7 @@ class PrintingNotesDialog(QDialog):
                 self.current_category = category_item.text()
                 self.update_note_list()
                 self.note_list.setCurrentRow(-1)
-                self.detail_browser.clear()
+                self.show_empty_state()
 
     def on_note_selected(self, index):
         """问题选中事件"""
@@ -384,8 +410,45 @@ class PrintingNotesDialog(QDialog):
                     note = self._find_note_by_id(note_id)
                     if note:
                         self.display_note_detail(note)
-        else:
-            self.detail_browser.clear()
+                        return
+
+        # 显示空状态
+        self.show_empty_state()
+
+    def show_empty_state(self):
+        """显示空状态提示"""
+        t = theme.current_tokens()
+        empty_html = f"""
+        <style>
+            body {{
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100%;
+                color: {t["text_muted"]};
+                font-size: 14px;
+                text-align: center;
+                padding: 40px;
+            }}
+            .empty-icon {{
+                font-size: 48px;
+                color: {t["text_dim"]};
+                margin-bottom: 16px;
+            }}
+            .empty-text {{
+                color: {t["text_muted"]};
+                line-height: 1.6;
+            }}
+        </style>
+        <div>
+            <div class="empty-icon">📝</div>
+            <div class="empty-text">
+                请从左侧列表选择一个问题查看详情<br>
+                或点击"添加"按钮创建新的注意事项
+            </div>
+        </div>
+        """
+        self.detail_browser.setHtml(empty_html)
     
     def _find_note_by_id(self, note_id):
         """根据ID查找问题"""
@@ -401,62 +464,40 @@ class PrintingNotesDialog(QDialog):
 
     def apply_theme(self) -> None:
         """Re-apply themed HTML for the current selection (after theme switch)."""
+        # 更新按钮样式
+        self.btn_add.setStyleSheet(StyleFactory.get_style("button_accent"))
+        self.btn_edit.setStyleSheet(StyleFactory.get_style("button_neutral"))
+        self.btn_delete.setStyleSheet(StyleFactory.get_style("button_danger"))
+
+        # 重新渲染当前笔记或空状态
         try:
             current_row = self.note_list.currentRow()
             if current_row < 0:
-                self.detail_browser.clear()
+                self.show_empty_state()
                 return
             item = self.note_list.item(current_row)
             if not item:
-                self.detail_browser.clear()
+                self.show_empty_state()
                 return
             note_id = item.data(Qt.ItemDataRole.UserRole)
             note = self._find_note_by_id(note_id) if note_id else None
             if note:
                 self.display_note_detail(note)
             else:
-                self.detail_browser.clear()
+                self.show_empty_state()
         except Exception:
             pass
 
-
-def render_note_detail_html(note: dict) -> str:
-    """Build the themed HTML used by the note detail viewer."""
-    t = theme.current_tokens()
-    title = str(note.get("title", "") or "")
-    category = str(note.get("category", "") or "")
-    content = str(note.get("content", "") or "").replace("\n", "<br>")
-    created_at = str(note.get("created_at", "") or "")
-    updated_at = str(note.get("updated_at", "") or "")
-
-    return f"""
-    <style>
-      body {{ color: {t["text"]}; font-size: 11pt; line-height: 1.6; }}
-      h1 {{ color: {t["accent_link"]}; font-size: 14pt; margin-bottom: 10px; }}
-      .category {{ color: {t["text_muted"]}; font-size: 10pt; margin-bottom: 15px; }}
-      .meta {{ color: {t["text_dim"]}; font-size: 9pt; margin-top: 20px; padding-top: 10px; border-top: 1px solid {t["border_light"]}; }}
-      hr {{ border: none; border-top: 1px solid {t["border_light"]}; margin: 10px 0; }}
-    </style>
-    <h1>{title}</h1>
-    <p class="category">分类: {category}</p>
-    <hr>
-    <p>{content}</p>
-    <p class="meta">
-      创建时间: {created_at}<br>
-      更新时间: {updated_at}
-    </p>
-    """
-    
     def on_search_changed(self):
         """搜索文本改变事件"""
         self.update_note_list()
-    
+
     def add_note(self):
         """添加新问题"""
         categories = self.get_categories()
         if not categories:
             categories = ["打印工艺", "机械问题", "挤出问题", "硬件问题", "维护保养"]
-        
+
         dialog = NoteEditDialog(categories=categories, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             note_data = dialog.get_result()
@@ -466,7 +507,7 @@ def render_note_detail_html(note: dict) -> str:
                 self.update_category_list()
                 self.update_note_list()
                 self.log(f"已添加新问题: {note_data['title']}")
-    
+
     def edit_note(self):
         """编辑问题"""
         current_row = self.note_list.currentRow()
@@ -485,11 +526,11 @@ def render_note_detail_html(note: dict) -> str:
             return
 
         note = self._find_note_by_id(note_id)
-        
+
         if not note:
             StyledMessageBox.warning(self, "错误", "未找到选中的问题！")
             return
-        
+
         categories = self.get_categories()
         dialog = NoteEditDialog(note_data=note, categories=categories, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -506,7 +547,7 @@ def render_note_detail_html(note: dict) -> str:
                 # 重新选中并显示
                 self.note_list.setCurrentRow(current_row)
                 self.log(f"已更新问题: {note_data['title']}")
-    
+
     def delete_note(self):
         """删除问题"""
         current_row = self.note_list.currentRow()
@@ -523,23 +564,23 @@ def render_note_detail_html(note: dict) -> str:
             return
 
         note = self._find_note_by_id(note_id)
-        
+
         if not note:
             return
-        
+
         reply = StyledMessageBox.question(
             self,
             "确认删除",
             f"确定要删除问题「{note['title']}」吗？"
         )
-        
+
         if reply == StyledMessageBox.Yes:
             self.notes = [n for n in self.notes if n['id'] != note_id]
             self.save_notes()
             self.update_category_list()
             self.update_note_list()
             self.log(f"已删除问题: {note['title']}")
-    
+
     def log(self, message):
         """记录日志（调用主窗口的日志方法）"""
         try:
@@ -548,3 +589,74 @@ def render_note_detail_html(note: dict) -> str:
                 parent.log(f"打印注意事项: {message}")
         except Exception:
             pass
+
+
+def render_note_detail_html(note: dict) -> str:
+    """Build the themed HTML used by the note detail viewer."""
+    t = theme.current_tokens()
+    title = str(note.get("title", "") or "")
+    category = str(note.get("category", "") or "")
+    content = str(note.get("content", "") or "").replace("\n", "<br>")
+    created_at = str(note.get("created_at", "") or "")
+    updated_at = str(note.get("updated_at", "") or "")
+
+    return f"""
+    <style>
+        body {{
+            color: {t["text"]};
+            font-family: {t.get("font_main", "sans-serif")};
+            font-size: 13px;
+            line-height: 1.8;
+            padding: 24px;
+            margin: 0;
+        }}
+        h1 {{
+            color: {t["accent_link"]};
+            font-size: 20px;
+            font-weight: 600;
+            margin: 0 0 12px 0;
+            padding-bottom: 12px;
+            border-bottom: 2px solid {t["accent_link"]};
+        }}
+        .category-badge {{
+            display: inline-block;
+            background-color: {t["bg_tertiary"]};
+            color: {t["text_muted"]};
+            font-size: 11px;
+            font-weight: 500;
+            padding: 4px 12px;
+            border-radius: {t["radius"]};
+            margin-bottom: 20px;
+            border: 1px solid {t["border"]};
+        }}
+        .content {{
+            color: {t["text"]};
+            font-size: 14px;
+            line-height: 1.8;
+            margin: 20px 0;
+            padding: 16px;
+            background-color: {t["bg_panel"]};
+            border-radius: {t.get("radius_lg", "6px")};
+            border-left: 3px solid {t["accent_blue"]};
+        }}
+        .meta {{
+            color: {t["text_dim"]};
+            font-size: 11px;
+            margin-top: 24px;
+            padding-top: 16px;
+            border-top: 1px solid {t["border_light"]};
+            line-height: 1.6;
+        }}
+        .meta-label {{
+            color: {t["text_muted"]};
+            font-weight: 500;
+        }}
+    </style>
+    <h1>{title}</h1>
+    <div class="category-badge">📁 {category}</div>
+    <div class="content">{content}</div>
+    <div class="meta">
+        <div><span class="meta-label">创建时间:</span> {created_at}</div>
+        <div><span class="meta-label">更新时间:</span> {updated_at}</div>
+    </div>
+    """

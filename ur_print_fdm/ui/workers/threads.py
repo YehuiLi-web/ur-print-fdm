@@ -23,10 +23,21 @@ class ScriptSendThread(QThread):
         with trace_context(self.trace_id):
             try:
                 logger.info("Sending script (%d chars)", len(self.script_content or ""))
-                success = bool(self.driver.send_script(self.script_content))
+                result = self.driver.send_script(self.script_content)
+
+                # 兼容新旧返回值格式
+                if isinstance(result, tuple):
+                    success, warning = result
+                else:
+                    success, warning = bool(result), None
+
                 if success:
-                    logger.info("脚本已发送至控制器。", extra={"ui_level": "SUCCESS"})
-                    self.result_signal.emit(True, "脚本已发送至控制器。")
+                    if warning:
+                        logger.warning(warning, extra={"ui_level": "WARN"})
+                        self.result_signal.emit(True, f"脚本已发送。警告: {warning}")
+                    else:
+                        logger.info("脚本已发送至控制器。", extra={"ui_level": "SUCCESS"})
+                        self.result_signal.emit(True, "脚本已发送至控制器。")
                 else:
                     logger.error("脚本发送失败 (send_script 返回 False)。", extra={"ui_level": "ERROR"})
                     self.result_signal.emit(False, "脚本发送失败 (send_script 返回 False)。")

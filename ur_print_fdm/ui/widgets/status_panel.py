@@ -12,13 +12,16 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QGroupBox, QToolButton, QFrame, QSizePolicy, QHeaderView)
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from ur_print_fdm.config import config_manager
+from ur_print_fdm.ui.mixins.theme_aware import ThemeAwareMixin
+from ur_print_fdm.ui.style_utils import themed_qss
 
-class CollapsibleBox(QGroupBox):
+class CollapsibleBox(QGroupBox, ThemeAwareMixin):
     """Collapsible panel component"""
     toggled = pyqtSignal(bool)  # Fold state changed signal
 
     def __init__(self, title="", parent=None, state_key=None):
         super().__init__(title, parent)
+        self.setup_theme_awareness()
         self.state_key = state_key  # Key for state memory
 
         # Main Layout
@@ -37,7 +40,7 @@ class CollapsibleBox(QGroupBox):
         self.toggle_button = QToolButton()
         self.toggle_button.setCheckable(True)
         self.toggle_button.setArrowType(Qt.ArrowType.DownArrow)
-        self.toggle_button.setStyleSheet("""
+        self.toggle_button.setStyleSheet(themed_qss("""
             QToolButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                                           stop:0 #4a4a4a, stop:1 #3a3a3a);
@@ -50,12 +53,12 @@ class CollapsibleBox(QGroupBox):
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                                           stop:0 #5a5a5a, stop:1 #4a4a4a);
             }
-        """)
+        """))
         self.toggle_button.toggled.connect(self.toggle_content)
 
         # Title Label
         self.title_label = QLabel(title)
-        self.title_label.setStyleSheet("color: #ffffff; font-weight: bold; font-size: 12px;")
+        self.title_label.setStyleSheet(f"color: {self.get_token('text')}; font-weight: bold; font-size: 12px;")
 
         title_layout.addWidget(self.toggle_button)
         title_layout.addWidget(self.title_label)
@@ -74,6 +77,28 @@ class CollapsibleBox(QGroupBox):
         # Load saved state
         if self.state_key:
             self.load_state()
+
+    def on_theme_changed(self, theme_id: str):
+        """主题变更回调"""
+        # 更新标题标签颜色
+        if hasattr(self, 'title_label'):
+            self.title_label.setStyleSheet(f"color: {self.get_token('text')}; font-weight: bold; font-size: 12px;")
+        # 更新按钮样式
+        if hasattr(self, 'toggle_button'):
+            self.toggle_button.setStyleSheet(themed_qss("""
+                QToolButton {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                              stop:0 #4a4a4a, stop:1 #3a3a3a);
+                    border: 1px solid #5a5a5a;
+                    border-radius: 3px;
+                    width: 16px;
+                    height: 16px;
+                }
+                QToolButton:checked {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                              stop:0 #5a5a5a, stop:1 #4a4a4a);
+                }
+            """))
 
     def toggle_content(self, checked):
         """Toggle content visibility"""

@@ -3,6 +3,10 @@ import logging
 
 from ur_print_fdm.constants import DASHBOARD_PORT
 
+# 状态查询命令（高频调用，使用 DEBUG 级别日志）
+_QUIET_COMMANDS = {"running", "programstate", "programState"}
+
+
 class SimpleDashboardDriver:
     """
     基于 test_sftp_dashboard.py 的简易 Dashboard 控制器
@@ -54,7 +58,11 @@ class SimpleDashboardDriver:
             cmd_str = command.strip() + "\n"
             self.sock.sendall(cmd_str.encode('utf-8'))
             response = self.sock.recv(1024).decode('utf-8').strip()
-            logging.info(f"[SimpleDB] 指令: {command} -> 响应: {response}")
+            # 状态查询命令使用 DEBUG 级别，避免刷屏
+            if command.strip().lower() in _QUIET_COMMANDS:
+                logging.debug(f"[SimpleDB] {command} -> {response}")
+            else:
+                logging.info(f"[SimpleDB] 指令: {command} -> 响应: {response}")
             return response
         except BrokenPipeError:
             logging.warning("[SimpleDB] 连接断开，尝试重连...")

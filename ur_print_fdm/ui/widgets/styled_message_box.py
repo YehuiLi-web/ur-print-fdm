@@ -76,9 +76,9 @@ class StyledMessageBox(QDialog):
             content_layout.addWidget(icon_label)
         
         # 消息文本
-        from ur_print_fdm.ui import theme
+        from ur_print_fdm.ui.theme_manager import get_theme_manager
 
-        t = theme.current_tokens()
+        t = get_theme_manager().current_tokens()
         self.message_label = QLabel(self._message)
         self.message_label.setWordWrap(True)
         self.message_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -130,9 +130,9 @@ class StyledMessageBox(QDialog):
     
     def _apply_style(self):
         """应用当前主题样式"""
-        from ur_print_fdm.ui import theme
+        from ur_print_fdm.ui.theme_manager import get_theme_manager
 
-        t = theme.current_tokens()
+        t = get_theme_manager().current_tokens()
         self.setStyleSheet(
             f"background-color: {t.get('bg_panel', '#252526')}; "
             f"border: 1px solid {t.get('border', '#3C3C3C')}; "

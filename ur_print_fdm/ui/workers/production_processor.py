@@ -222,7 +222,8 @@ class ProductionProcessor(QThread):
         low = str(resp).strip().lower()
         if not low:
             return True
-        if any(k in low for k in ("error", "failed", "failure", "not found", "no such", "denied")):
+        # 检查失败关键词，包括连接失败的情况
+        if any(k in low for k in ("error", "failed", "failure", "not found", "no such", "denied", "not connected")):
             return False
         return True
 
@@ -246,7 +247,30 @@ class ProductionProcessor(QThread):
         return False
 
     def _wait_for_finish(self, db: SimpleDashboardDriver) -> bool:
+        # 超时保护：0 或负数表示无限等待（默认禁用超时）
+        timeout_s = float(config_manager.get("production.max_program_timeout", 0) or 0)
+        start_time = time.time()
+
+        # 渐进式轮询：开始快，稳定后慢
+        # 0-10秒: 500ms, 10-60秒: 2秒, 60秒后: 5秒
+        def get_poll_interval() -> float:
+            elapsed = time.time() - start_time
+            if elapsed < 10:
+                return 0.5
+            elif elapsed < 60:
+                return 2.0
+            else:
+                return 5.0
+
         while True:
+            # 检查超时（仅当 timeout_s > 0 时生效）
+            if timeout_s > 0 and time.time() - start_time > timeout_s:
+                logger = logging.getLogger("ur_print_fdm.production")
+                logger.error("程序执行超时（超过 %.1f 小时），强制停止", timeout_s / 3600)
+                self.error_signal.emit(f"程序执行超时（超过 {timeout_s/3600:.1f} 小时），已强制停止")
+                self._stop_program_and_kill(db)
+                return False
+
             if self._should_abort():
                 self._stop_program_and_kill(db)
                 return False
@@ -257,7 +281,7 @@ class ProductionProcessor(QThread):
             if state == "STOPPED":
                 return True
             if state in ("PLAYING", "PAUSED"):
-                time.sleep(0.2)
+                time.sleep(get_poll_interval())
                 continue
 
             # Fallback: running?
@@ -265,7 +289,7 @@ class ProductionProcessor(QThread):
             if running is False:
                 return True
 
-            time.sleep(0.2)
+            time.sleep(get_poll_interval())
 
     def _apply_control_requests(self, db: SimpleDashboardDriver) -> None:
         if self._pause_event.is_set() and not self.paused:

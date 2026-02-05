@@ -351,10 +351,10 @@ class RTDETester:
         
         # 注意: def 需要显式调用，sec 是自动执行的 secondary 线程
         script = f"""
-def test_move():
+def test_control():
     movej([{','.join(str(q) for q in target_q)}], a=0.5, v=0.3)
 end
-test_move()
+test_control()
 """
         
         self.log("发送前状态:")
@@ -428,7 +428,7 @@ emergency_stop()
         try:
             current_q = self.rr.getActualQ()
             target_q = list(current_q)
-            target_q[0] += 0.05
+            target_q[0] += 1
             
             self.log("发送前状态:")
             self.check_status()
@@ -873,6 +873,44 @@ test_script()
             status = "✓ 连接" if connected else "✗ 断开"
             self.log(f"  {desc}: 实际 {t:.3f}s, {status}")
 
+    def test_10_socket_stopj(self):
+        """测试10: 通过 30002 端口发送 stopj 脚本"""
+        self.log("=== 测试10: 30002 端口发送 stopj ===")
+        self.log("目的: 通过 Socket 30002 发送 stopj 命令停止机器人运动")
+
+        # 检测当前状态
+        self.log("\n发送前状态:")
+        self.check_status(show_rtde_control=False)
+
+        # stopj 脚本
+        script = """def stop_robot():
+  stopj(2.0)
+end
+stop_robot()
+"""
+
+        # 通过 30002 端口发送
+        import socket
+        self.log("\n通过 30002 端口发送 stopj 脚本...")
+        t0 = time.time()
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5.0)
+            sock.connect((self.robot_ip, 30002))
+            sock.sendall(script.encode('utf-8'))
+            sock.close()
+            t1 = time.time()
+            self.log(f"✓ 发送完成! 耗时: {t1-t0:.3f}s")
+        except Exception as e:
+            self.log(f"✗ 发送失败: {e}")
+            return
+
+        # 发送后检测
+        self.log("\n发送后状态:")
+        time.sleep(0.5)
+        self.check_status(show_rtde_control=False)
+
     def reconnect_control(self):
         """重连 RTDEControlInterface (恢复 rtde_control)"""
         self.log("=== 重连 RTDEControlInterface ===")
@@ -1032,6 +1070,7 @@ def print_menu():
     print("  8 - 测试: 发送脚本后精确检查连接")
     print("  9 - 测试: 发送脚本文件 (sendCustomScript, 阻塞)")
     print("  0 - 测试: 30002端口发送 → 检测 rtde_control ★★")
+    print("  10 - 测试: 30002端口发送 stopj")
     print("  ─" * 27)
     print("  Q - 退出")
     print("="*55)
@@ -1144,6 +1183,8 @@ def main():
             tester.test_9_send_file_script()
         elif choice == '0':
             tester.test_0_send_script_socket()
+        elif choice == '10':
+            tester.test_10_socket_stopj()
         elif choice == 'Q':
             tester.disconnect()
             print("\n再见！")

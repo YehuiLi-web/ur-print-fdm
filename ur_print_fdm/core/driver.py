@@ -270,31 +270,44 @@ class URDriver:
 
     # === 运动指令发送 ===
     def send_script(self, script_str):
-        """发送并立即执行脚本 (自动补全函数调用)"""
-        # 自动补全调用逻辑：如果脚本以 def 开始但结尾没有调用该函数，则自动补全
+        """
+        发送并立即执行脚本。
+
+        返回: (success: bool, warning: str | None)
+            - success: 是否发送成功
+            - warning: 警告信息（如检测到可能缺少函数调用）
+        """
+        warning = None
+        func_name = None
+
+        # 检测是否可能缺少函数调用（不自动追加，只警告）
         stripped_script = script_str.strip()
         if stripped_script.startswith("def "):
             match = re.match(r"def\s+(\w+)\s*\(", stripped_script)
             if match:
                 func_name = match.group(1)
-                # 如果脚本结尾不是以该函数名加括号结束，则手动添加
-                if not stripped_script.endswith(f"{func_name}()"):
-                    script_str = script_str.rstrip() + f"\n\n{func_name}()\n"
+                # 检查脚本中是否包含对该函数的调用
+                # 使用正则匹配独立的函数调用（不在 def 行内）
+                call_pattern = rf"(?<!def\s)(?<!\w){re.escape(func_name)}\s*\(\s*\)"
+                if not re.search(call_pattern, stripped_script):
+                    warning = f"检测到脚本定义了函数 '{func_name}' 但可能未调用，脚本可能不会执行任何操作"
+                    logging.warning(warning)
 
         sanitized_script = sanitize_script_content(script_str)
 
         with self._lock:
             if not self.connected or self.read_only or not self.rc:
                 logging.error("无法发送：处于只读模式或未连接")
-                return False
+                return False, None
             rc_ref = self.rc
 
         try:
-            logging.debug(f"发送脚本至控制器: {func_name if 'func_name' in locals() else 'Raw Script'}")
-            return rc_ref.sendCustomScript(sanitized_script)
+            logging.debug(f"发送脚本至控制器: {func_name if func_name else 'Raw Script'}")
+            success = rc_ref.sendCustomScript(sanitized_script)
+            return success, warning
         except Exception as e:
             logging.error(f"发送脚本异常: {e}")
-            return False
+            return False, None
 
     # === Dashboard 系统控制 (官方库实现) ===
 
@@ -1040,6 +1053,38 @@ class URDriver:
             return self.rr.getTcpOffset()
         except Exception as e:
             logging.error(f"get_tcp_offset failed: {e}")
+            return None
+
+    def get_tcp_force(self):
+        """
+        Gets the TCP force/torque from the builtin force/torque sensor
+        :return: [Fx, Fy, Fz, Mx, My, Mz] force/torque vector or None if failed
+        """
+        with self._lock:
+            if not self.rr:
+                logging.error("Cannot get_tcp_force: receive interface not available")
+                return None
+            rr_ref = self.rr
+        try:
+            return list(rr_ref.getActualTCPForce())
+        except Exception as e:
+            logging.error(f"get_tcp_force failed: {e}")
+            return None
+
+    def get_tcp_pose(self):
+        """
+        Gets the actual TCP pose
+        :return: [x, y, z, rx, ry, rz] pose vector or None if failed
+        """
+        with self._lock:
+            if not self.rr:
+                logging.error("Cannot get_tcp_pose: receive interface not available")
+                return None
+            rr_ref = self.rr
+        try:
+            return list(rr_ref.getActualTCPPose())
+        except Exception as e:
+            logging.error(f"get_tcp_pose failed: {e}")
             return None
 
     def set_payload(self, mass, cog=[]):

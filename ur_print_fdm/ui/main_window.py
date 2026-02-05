@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QMainWindow, QDockWidget, QTextEdit,
                              QLabel, QVBoxLayout, QFileDialog,
                              QProgressBar, QHBoxLayout,
                              QCheckBox, QComboBox, QSizePolicy, QGroupBox, QStyle,
-                             QInputDialog)
+                             QInputDialog, QListView)
 from ur_print_fdm.ui.widgets.styled_message_box import StyledMessageBox
 from PyQt6.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QAction, QIcon
@@ -28,8 +28,10 @@ from ur_print_fdm.shared.net import is_valid_ip
 # === 组件引入 (全部模块化) ===
 from ur_print_fdm.ui.widgets.file_explorer import FileExplorerWidget  # 文件资源管理器组件
 from ur_print_fdm.ui.widgets.collapsible_status_dock import StatusWidget
+from ur_print_fdm.ui.widgets.combobox_fix import fix_combobox_popup
 from ur_print_fdm.ui.widgets.editor import DockableEditorWidget  # 新增dockable编辑器组件
-from ur_print_fdm.ui.theme import apply_app_theme
+from ur_print_fdm.ui.theme import apply_app_theme  # 向后兼容
+from ur_print_fdm.ui.theme_manager import get_theme_manager  # 新的主题管理器
 from ur_print_fdm.ui.controllers.queue_controller import QueueController
 from ur_print_fdm.ui.controllers.tools_controller import ToolsController
 from ur_print_fdm.ui.services.log_service import LogService
@@ -42,6 +44,7 @@ from ur_print_fdm.ui.workers.threads import (
     MonitorThread,
     ControlReconnectThread,
 )
+from ur_print_fdm.ui.workers.direct_mode_processor import DirectModeProcessor
 from ur_print_fdm.estimators.simple_gcode import SimpleGCodeTimeEstimator
 from ur_print_fdm.plugins.registry import registry
 from ur_print_fdm.ui.resources.icon_manager import IconManager
@@ -49,7 +52,14 @@ from ur_print_fdm.ui.resources.icon_manager import IconManager
 class URPrintIDE(QMainWindow):
     def __init__(self):
         super().__init__()
-        apply_app_theme(bool(config_manager.get("ui.dark_theme", True)))
+        # 使用新的ThemeManager
+        theme_mgr = get_theme_manager()
+        use_dark = bool(config_manager.get("ui.dark_theme", True))
+        theme_mgr.set_theme("dark" if use_dark else "light")
+
+        # 初始化IconManager的主题监听器（必须在QApplication创建之后）
+        from ur_print_fdm.ui.resources.icon_manager import _init_theme_listener
+        _init_theme_listener()
 
         self.backend_id = config_manager.get("robot.backend_id", "ur_rtde_cb3")
         self.backend = None
@@ -82,6 +92,7 @@ class URPrintIDE(QMainWindow):
         self.script_thread = None
         self.reconnect_thread = None
         self.upload_thread = None
+        self._direct_mode_processor = None  # Direct mode processor (30002 port)
         self._upload_queue = []
         self._upload_also_loader = False
         self.last_static_time = 0
@@ -163,6 +174,15 @@ class URPrintIDE(QMainWindow):
         self.dockable_editor = DockableEditorWidget()
         self.setCentralWidget(self.dockable_editor)
         self.tools_controller = ToolsController(self, self.dockable_editor, self.log)
+
+        # === 订阅主题变更 ===
+        theme_mgr = get_theme_manager()
+        theme_mgr.add_listener(self._on_theme_changed)
+
+    def _on_theme_changed(self, theme_id: str):
+        """主题变更时的回调函数"""
+        self._refresh_theme_dependent_ui()
+
 
     def create_new_tab(self):
         """创建新标签页 (包装器)"""
@@ -323,77 +343,15 @@ class URPrintIDE(QMainWindow):
         calc_submenu = tools_menu.addMenu(icon(SP.SP_ComputerIcon), "工艺计算器")
         calc_submenu.setStatusTip("打印工艺参数计算工具集")
 
-        # 挤出控制组
-        calc_submenu.addSection("挤出控制")
-
         act_flow = QAction("流量控制", self)
         act_flow.setStatusTip("根据线宽、层高和速度计算挤出机流量参数")
         act_flow.triggered.connect(lambda: self.show_specific_calculator('flow'))
         calc_submenu.addAction(act_flow)
 
-        act_fiber = QAction("纤维补偿", self)
-        act_fiber.setStatusTip("计算纤维增强材料的挤出比例补偿值")
-        act_fiber.triggered.connect(lambda: self.show_specific_calculator('fiber'))
-        calc_submenu.addAction(act_fiber)
-
-        act_pressure = QAction("压力补偿", self)
-        act_pressure.setStatusTip("根据打印速度变化计算动态压力补偿")
-        act_pressure.triggered.connect(lambda: self.show_specific_calculator('pressure'))
-        calc_submenu.addAction(act_pressure)
-
-        # 姿态控制组
-        calc_submenu.addSection("姿态控制")
-
-        act_tangent = QAction("切线跟随", self)
-        act_tangent.setStatusTip("计算沿路径切线方向的工具姿态")
-        act_tangent.triggered.connect(lambda: self.show_specific_calculator('tangent'))
-        calc_submenu.addAction(act_tangent)
-
-        act_tilt = QAction("倾角计算", self)
-        act_tilt.setStatusTip("计算变倾角打印的姿态参数")
-        act_tilt.triggered.connect(lambda: self.show_specific_calculator('tilt'))
-        calc_submenu.addAction(act_tilt)
-
-        act_curvature = QAction("曲率校验", self)
-        act_curvature.setStatusTip("校验路径曲率半径是否满足打印要求")
-        act_curvature.triggered.connect(lambda: self.show_specific_calculator('curvature'))
-        calc_submenu.addAction(act_curvature)
-
-        # 同步控制组
-        calc_submenu.addSection("同步控制")
-
         act_turntable = QAction("转台同步", self)
         act_turntable.setStatusTip("计算转台旋转与机器人运动的同步参数")
         act_turntable.triggered.connect(lambda: self.show_specific_calculator('turntable'))
         calc_submenu.addAction(act_turntable)
-
-        act_external = QAction("外部轴映射", self)
-        act_external.setStatusTip("配置外部轴与机器人坐标系的映射关系")
-        act_external.triggered.connect(lambda: self.show_specific_calculator('external'))
-        calc_submenu.addAction(act_external)
-
-        act_heat = QAction("加热功率", self)
-        act_heat.setStatusTip("根据材料和速度预测所需加热功率")
-        act_heat.triggered.connect(lambda: self.show_specific_calculator('heat'))
-        calc_submenu.addAction(act_heat)
-
-        # 几何工具组
-        calc_submenu.addSection("几何工具")
-
-        act_offset = QAction("位姿偏置", self)
-        act_offset.setStatusTip("计算位姿的平移和旋转偏置")
-        act_offset.triggered.connect(lambda: self.show_specific_calculator('offset'))
-        calc_submenu.addAction(act_offset)
-
-        act_tcp = QAction("TCP 转换", self)
-        act_tcp.setStatusTip("在不同工具坐标系之间转换位姿")
-        act_tcp.triggered.connect(lambda: self.show_specific_calculator('tcp'))
-        calc_submenu.addAction(act_tcp)
-
-        act_unit = QAction("单位转换", self)
-        act_unit.setStatusTip("角度、弧度、毫米等单位互转")
-        act_unit.triggered.connect(lambda: self.show_specific_calculator('unit'))
-        calc_submenu.addAction(act_unit)
 
         tools_menu.addSeparator()
 
@@ -515,9 +473,11 @@ class URPrintIDE(QMainWindow):
 
         self.ip_combo = QComboBox()
         self.ip_combo.setEditable(True)
+        fix_combobox_popup(self.ip_combo, allow_edit=True)  # 修复弹出框覆盖问题
         self.ip_combo.setMinimumWidth(140)
         self.ip_combo.setMaximumWidth(160)
         self.ip_combo.setProperty("ui_role", "toolbar_combo")
+        self.ip_combo.setMaxVisibleItems(10)
 
         ip_addresses = config_manager.get("robot.ip_addresses",
             ["192.168.137.120", "192.168.137.100", "192.168.244.129", "192.168.56.101"])
@@ -562,9 +522,10 @@ class URPrintIDE(QMainWindow):
                 padding-left: 4px;
             }
         """)
-        
+
         # 状态指示器容器，保证垂直居中
         indicator_container = QWidget()
+        indicator_container.setStyleSheet("background: transparent;")
         indicator_layout = QHBoxLayout(indicator_container)
         indicator_layout.setContentsMargins(8, 0, 8, 0)
         indicator_layout.setSpacing(4)
@@ -599,18 +560,21 @@ class URPrintIDE(QMainWindow):
         toolbar.addWidget(lbl_mode)
 
         self.run_mode_combo = QComboBox()
-        self.run_mode_combo.addItem(icon_mgr.get_svg_icon("queue", (16, 16)), "生产（推荐，支持暂停）", "production")
-        self.run_mode_combo.addItem(icon_mgr.get_svg_icon("robot", (16, 16)), "直连 RTDE（调试）", "direct")
+        self.run_mode_combo.addItem("生产模式", "production")
+        self.run_mode_combo.addItem("直连模式", "direct")
+        fix_combobox_popup(self.run_mode_combo)  # 修复弹出框覆盖问题（必须在 addItem 之后调用）
         self.run_mode_combo.setProperty("ui_role", "toolbar_combo")
+        self.run_mode_combo.setMinimumWidth(80)
+        self.run_mode_combo.setMaximumWidth(100)
         self.run_mode_combo.setToolTip(
             "生产模式（推荐，CB3 最稳定）：\n"
-            "- SFTP 上传脚本到机器人 programs 目录\n"
-            "- Dashboard 加载 loader.urp，并通过 play/pause/stop 控制\n\n"
-            "直连 RTDE（调试用途）：\n"
-            "- 直接发送脚本到控制器执行\n"
-            "- 不支持可靠暂停/继续（CB3 特性）"
+            "• SFTP 上传脚本到机器人\n"
+            "• Dashboard 控制执行\n"
+            "• 支持可靠的暂停/继续\n\n"
+            "直连模式（调试用途）：\n"
+            "• 直接发送脚本执行\n"
+            "• 不支持可靠暂停/继续"
         )
-        self.run_mode_combo.setFixedWidth(190)
         default_mode = str(config_manager.get("ui.run_mode", "production") or "production")
         default_idx = self.run_mode_combo.findData(default_mode)
         if default_idx >= 0:
@@ -641,7 +605,7 @@ class URPrintIDE(QMainWindow):
 
         # 上传按钮（独立功能：有时需要手动传文件到机器人端）
         self.btn_upload = QPushButton("上传")
-        self.btn_upload.setObjectName("btn-toolbar-neutral")
+        self.btn_upload.setObjectName("btn-toolbar-ghost")
         self.btn_upload.setIcon(icon_mgr.get_svg_icon("upload", (16, 16)))
         self.btn_upload.setToolTip(
             "通过 SFTP 上传文件到机器人端 programs 目录\n"
@@ -655,6 +619,7 @@ class URPrintIDE(QMainWindow):
         # 区域5: 辅助功能
         # ============================================================
         spacer = QWidget()
+        spacer.setStyleSheet("background: transparent;")
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
@@ -1207,30 +1172,6 @@ class URPrintIDE(QMainWindow):
             self.log(f"暂停/继续失败: {e}", "ERROR")
 
     # 以下是新增的菜单面板显示函数
-    def show_calculator_panel_at_tab(self, tab_index):
-        """显示工术计算器面板并切换到指定标签页"""
-        if not hasattr(self, 'calc_dialog') or self.calc_dialog is None:
-            self.show_calculator_panel()
-
-        # 确保计算器部件已存在
-        if hasattr(self, 'calc_widget'):
-            # 获取计算器中的标签页部件并切换到指定标签页
-            if hasattr(self.calc_widget, 'layout') and hasattr(self.calc_widget, '_init_ui'):
-                # 访问计算器内部的标签页
-                try:
-                    # 获取计算器内部的标签页组件
-                    if hasattr(self.calc_widget, 'tabs'):
-                        # 切换到指定标签页
-                        self.calc_widget.tabs.setCurrentIndex(tab_index)
-                        self.calc_dialog.show()
-                        self.calc_dialog.raise_()
-                        self.calc_dialog.activateWindow()
-                except Exception:
-                    # 如果直接访问失败，使用标准方法打开
-                    self.show_calculator_panel()
-        else:
-            self.show_calculator_panel()
-
     def show_specific_calculator(self, calc_type):
         """显示特定类型的独立计算器（使用缓存避免重复创建）"""
         # 检查缓存中是否已有该类型的对话框
@@ -1244,9 +1185,7 @@ class URPrintIDE(QMainWindow):
         # 根据类型创建不同的计算器窗口
         from PyQt6.QtWidgets import QDialog, QVBoxLayout
         from ur_print_fdm.ui.widgets.extrusion_calculator import ExtrusionCalculatorWidget
-        from ur_print_fdm.ui.widgets.orientation_calculator import OrientationCalculatorWidget
         from ur_print_fdm.ui.widgets.sync_calculator import SyncCalculatorWidget
-        from ur_print_fdm.ui.widgets.geometry_calculator import GeometryCalculatorWidget
 
         # 创建一个对话框来容纳特定的计算器
         dialog = QDialog(self)
@@ -1258,18 +1197,13 @@ class URPrintIDE(QMainWindow):
         self.center_dialog_on_parent(dialog)
 
         # 根据类型创建计算器部件
-        if calc_type in ['flow', 'fiber', 'pressure']:
+        if calc_type == 'flow':
             calc_widget = ExtrusionCalculatorWidget(show_only=calc_type)
-        elif calc_type in ['tangent', 'tilt', 'curvature']:
-            calc_widget = OrientationCalculatorWidget(show_only=calc_type)
-        elif calc_type in ['turntable', 'external', 'heat']:
+        elif calc_type == 'turntable':
             calc_widget = SyncCalculatorWidget(show_only=calc_type)
-        elif calc_type in ['offset', 'tcp', 'unit']:
-            calc_widget = GeometryCalculatorWidget(show_only=calc_type)
         else:
-            # 如果类型不匹配，显示完整的计算器
-            from ur_print_fdm.ui.widgets.calculator import CalculatorWidget
-            calc_widget = CalculatorWidget()
+            # 不支持的类型，返回
+            return
 
         layout = QVBoxLayout()
         layout.addWidget(calc_widget)
@@ -1286,45 +1220,10 @@ class URPrintIDE(QMainWindow):
     def _get_calculator_title(self, calc_type):
         """根据计算器类型返回合适的标题"""
         titles = {
-            'flow': "挤出与流量控制",
-            'fiber': "纤维比例补偿",
-            'pressure': "动态压力补偿",
-            'tangent': "切线姿态跟随",
-            'tilt': "变倾角计算",
-            'curvature': "曲率半径校验",
+            'flow': "流量控制",
             'turntable': "转台同步",
-            'external': "外部轴坐标映射",
-            'heat': "加热功率预测",
-            'offset': "位姿平移与偏置",
-            'tcp': "TCP自动转换",
-            'unit': "单位转换"
         }
         return titles.get(calc_type, "计算器")
-
-    def show_calculator_panel(self):
-        """显示工术计算器面板"""
-        if not hasattr(self, 'calc_dialog') or self.calc_dialog is None:
-            from ur_print_fdm.ui.widgets.calculator import CalculatorWidget
-            from PyQt6.QtWidgets import QDialog, QVBoxLayout
-
-            self.calc_dialog = QDialog(self)
-            self.calc_dialog.setWindowTitle("工术计算器")
-            self.calc_dialog.setModal(False)
-            self.calc_dialog.resize(600, 500)
-
-            # 居中显示
-            self.center_dialog_on_parent(self.calc_dialog)
-
-            # 创建计算器部件
-            self.calc_widget = CalculatorWidget()
-            layout = QVBoxLayout()
-            layout.addWidget(self.calc_widget)
-            self.calc_dialog.setLayout(layout)
-
-        # 显示并激活对话框
-        self.calc_dialog.show()
-        self.calc_dialog.raise_()
-        self.calc_dialog.activateWindow()
 
     def show_library_panel(self):
         """显示样件生成库面板"""
@@ -1476,8 +1375,9 @@ class URPrintIDE(QMainWindow):
         # 5) Apply theme/window size immediately where possible
         try:
             use_dark = bool(config_manager.get("ui.dark_theme", True))
-            apply_app_theme(use_dark)
-            self._refresh_theme_dependent_ui()
+            theme_mgr = get_theme_manager()
+            theme_mgr.set_theme("dark" if use_dark else "light")
+            # 不再需要手动刷新，组件会通过信号自动响应
         except Exception as e:
             logging.getLogger("ur_print_fdm").exception("Failed to apply theme: %s", e)
 
@@ -1539,9 +1439,9 @@ class URPrintIDE(QMainWindow):
 
                 self.run_mode_combo.clear()
                 self.run_mode_combo.addItem(
-                    icon_mgr.get_svg_icon("queue", (16, 16)), "生产（推荐，支持暂停）", "production"
+                    icon_mgr.get_svg_icon("queue", (16, 16)), "生产模式", "production"
                 )
-                self.run_mode_combo.addItem(icon_mgr.get_svg_icon("robot", (16, 16)), "直连 RTDE（调试）", "direct")
+                self.run_mode_combo.addItem(icon_mgr.get_svg_icon("robot", (16, 16)), "直连模式", "direct")
 
                 if current is not None:
                     idx = self.run_mode_combo.findData(current)
@@ -2004,50 +1904,43 @@ class URPrintIDE(QMainWindow):
             self._start_single_run_production(script_path)
             return
 
-        # 直连模式：需要控制权限（RTDE Control）
-        if self.driver.is_read_only():
-            StyledMessageBox.warning(
-                self,
-                "只读模式",
-                "当前为只读模式，无法直连发送脚本。\n请切换到生产模式（SFTP+loader.urp）。",
-            )
-            return
-
+        # 直连模式：使用 30002 端口直接发送脚本（不依赖 RTDE Control）
         script_content = current_editor.toPlainText()
         if not script_content.strip():
             StyledMessageBox.information(self, "空脚本", "编辑器内容为空，无法运行。")
             return
 
-        if self.script_thread is not None and self.script_thread.isRunning():
-            self.log("脚本正在发送中，请稍候...")
+        if self._direct_mode_processor is not None and self._direct_mode_processor.isRunning():
+            self.log("直连模式正在运行中，请稍候...")
             return
 
         from ur_print_fdm.shared.logging_context import new_trace_id, trace_context
 
         trace_id = new_trace_id()
         with trace_context(trace_id):
-            self.log("[运行] 正在发送当前脚本... (直连模式)")
+            self.log("[运行] 正在发送当前脚本... (直连模式 - 30002端口)")
 
         self._start_urscript_estimate_on_run(script_content, trace_id=trace_id)
 
         self.btn_play_pause.setEnabled(False)
-        self.script_thread = ScriptSendThread(self.driver, script_content, trace_id=trace_id)
-        self.script_thread.result_signal.connect(self.on_script_send_result)
 
-        def thread_finished_handler():
-            if hasattr(self, "script_thread"):
-                self.script_thread = None
-
-        self.script_thread.finished.connect(self.script_thread.deleteLater)
-        self.script_thread.finished.connect(thread_finished_handler)
-        self.script_thread.start()
+        # 使用 DirectModeProcessor 通过 30002 端口发送
+        ip = self.driver.get_ip_address()
+        self._direct_mode_processor = DirectModeProcessor(ip, script_content, trace_id=trace_id)
+        self._direct_mode_processor.set_action_run(script_content)
+        self._direct_mode_processor.log_signal.connect(lambda msg: self.log(msg))
+        self._direct_mode_processor.script_sent_signal.connect(self._on_direct_mode_script_sent)
+        self._direct_mode_processor.finished_signal.connect(self._on_direct_mode_finished)
+        self._direct_mode_processor.error_signal.connect(lambda msg: self.log(msg, "ERROR"))
+        self._direct_mode_processor.start()
     
     def stop_current_script(self):
-        """停止当前任务：优先停止生产任务（Dashboard stop + 关闭挤出）。"""
+        """停止当前任务：优先停止生产任务，直连模式使用 30002 端口停止。"""
         from ur_print_fdm.shared.logging_context import new_trace_id, trace_context
 
         trace_id = new_trace_id()
 
+        # 1. 检查生产模式处理器
         active = self._get_active_production_processor()
         if active is not None and active.isRunning():
             reply = StyledMessageBox.question(
@@ -2070,6 +1963,19 @@ class URPrintIDE(QMainWindow):
                         self.log(f"停止失败: {e}", "ERROR")
             return
 
+        # 2. 检查当前运行模式
+        selected_mode = "production"
+        try:
+            selected_mode = str(self.run_mode_combo.currentData() or "production")
+        except Exception:
+            selected_mode = "production"
+
+        # 3. 直连模式：使用 30002 端口停止
+        if selected_mode == "direct":
+            self._stop_direct_mode()
+            return
+
+        # 4. 其他情况：使用原有的 StopThread（通过 driver.stop）
         if not self.driver.is_connected():
             self.log("未连接，无法发送停止指令。", "WARN")
             return
@@ -2124,6 +2030,64 @@ class URPrintIDE(QMainWindow):
         # 如果线程还在运行，尝试优雅停止
         if hasattr(self, 'stop_thread') and self.stop_thread and self.stop_thread.isRunning():
             self.stop_thread.stop_gracefully()
+
+    def _on_direct_mode_script_sent(self, success: bool, message: str):
+        """直连模式脚本发送完成回调"""
+        self._refresh_global_run_enabled()
+        if success:
+            self.log(f"[直连模式] {message}", "SUCCESS")
+        else:
+            self.log(f"[直连模式] {message}", "ERROR")
+            self._reset_urscript_estimate_run()
+
+    def _on_direct_mode_finished(self):
+        """直连模式处理器完成回调"""
+        if self._direct_mode_processor is not None:
+            try:
+                self._direct_mode_processor.deleteLater()
+            except Exception:
+                pass
+            self._direct_mode_processor = None
+        self._refresh_global_run_enabled()
+
+    def _on_direct_mode_stop_completed(self, success: bool, message: str):
+        """直连模式停止完成回调"""
+        self.btn_global_stop.setEnabled(True)
+        self._reset_global_pause_button()
+        self._refresh_global_run_enabled()
+        self._reset_urscript_estimate_run()
+        if success:
+            self.log(f"[直连模式] {message}", "SUCCESS")
+        else:
+            self.log(f"[直连模式] {message}", "WARN")
+
+    def _stop_direct_mode(self):
+        """直连模式停止：通过 30002 端口发送 stopj"""
+        from ur_print_fdm.shared.logging_context import new_trace_id, trace_context
+
+        trace_id = new_trace_id()
+
+        if not self.driver.is_connected():
+            self.log("未连接，无法发送停止指令。", "WARN")
+            return
+
+        with trace_context(trace_id):
+            self.log("[停止] 正在发送停止指令... (直连模式 - 30002端口)")
+
+        self.btn_global_stop.setEnabled(False)
+
+        ip = self.driver.get_ip_address()
+        stop_processor = DirectModeProcessor(ip, trace_id=trace_id)
+        stop_processor.set_action_stop()
+        stop_processor.connect_monitor()  # 连接 RTDE 用于检测停止状态
+        stop_processor.log_signal.connect(lambda msg: self.log(msg))
+        stop_processor.stop_completed_signal.connect(self._on_direct_mode_stop_completed)
+        stop_processor.finished_signal.connect(stop_processor.deleteLater)
+        stop_processor.start()
+
+        # 保存引用以便后续清理
+        self._direct_mode_stop_processor = stop_processor
+
     def toggle_monitor(self):
         if not self.driver.is_connected():
             # 从组合框获取当前文本（用户可能输入了新IP）

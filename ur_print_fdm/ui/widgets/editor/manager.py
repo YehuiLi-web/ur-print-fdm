@@ -8,7 +8,8 @@ from ur_print_fdm.ui.widgets.styled_message_box import StyledMessageBox
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QColor
 from ur_print_fdm.ui.resources.icon_manager import IconManager
-from ur_print_fdm.ui import theme
+from ur_print_fdm.ui.theme_manager import get_theme_manager
+from ur_print_fdm.ui.mixins.theme_aware import ThemeAwareMixin
 from ur_print_fdm.paths import editor_session_path
 
 # 常量配置
@@ -20,18 +21,18 @@ from .core import CodeEditor
 SESSION_FILE = str(editor_session_path())
 
 
-class EditorStatusBar(QFrame):
+class EditorStatusBar(QFrame, ThemeAwareMixin):
     """
     编辑器状态栏 - 中文友好设计
     参考 VSCode 布局，但使用中文标签
     """
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setup_theme_awareness()
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setFixedHeight(24)
         self._items = {}
         self.init_ui()
-        self.apply_theme()
 
     def _create_status_item(self, text, tooltip="", highlight=False):
         """创建状态栏项目"""
@@ -84,30 +85,34 @@ class EditorStatusBar(QFrame):
         except Exception:
             pass
 
+    def on_theme_changed(self, theme_id: str):
+        """主题变更回调"""
+        self.apply_theme()
+
     def apply_theme(self) -> None:
         """Apply the current app theme to the status bar (VSCode-like)."""
-        t = theme.current_tokens()
+        t = self.get_token  # 使用ThemeAwareMixin的便捷方法
         self.setStyleSheet(
             f"""
             EditorStatusBar {{
-                background-color: {t["bg_tertiary"]};
-                border-top: 1px solid {t["border_light"]};
+                background-color: {t("bg_tertiary")};
+                border-top: 1px solid {t("border_light")};
             }}
             QLabel {{
-                color: {t["text_muted"]};
+                color: {t("text_muted")};
                 font-size: 11px;
                 padding: 3px 12px;
             }}
             QLabel:hover {{
-                background-color: {t["bg_hover_strong"]};
-                color: {t["text"]};
+                background-color: {t("bg_hover_strong")};
+                color: {t("text")};
             }}
             QLabel[highlight="true"] {{
-                color: {t["text"]};
+                color: {t("text")};
                 font-weight: 600;
             }}
             QLabel#status_selection[active="true"] {{
-                color: {t["accent_link"]};
+                color: {t("accent_link")};
                 font-weight: 600;
             }}
             """
@@ -142,12 +147,13 @@ class EditorStatusBar(QFrame):
                 self._items[key].setToolTip(tooltip)
 
 
-class WelcomeWidget(QWidget):
+class WelcomeWidget(QWidget, ThemeAwareMixin):
     """欢迎页面组件"""
     file_requested = pyqtSignal(str)  # 请求打开文件信号
 
     def __init__(self, recent_files=None):
         super().__init__()
+        self.setup_theme_awareness()
         self.recent_files = recent_files or []
         self._recent_file_links = []  # list[(QLabel, file_path)]
         self._recent_label = None
@@ -157,7 +163,6 @@ class WelcomeWidget(QWidget):
         self._subtitle_label = None
         self._tips_label = None
         self.init_ui()
-        self.apply_theme()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -176,7 +181,8 @@ class WelcomeWidget(QWidget):
         robot_icon.setPixmap(robot_pixmap)
         title_layout.addWidget(robot_icon, 0, Qt.AlignmentFlag.AlignCenter)
         title = QLabel("UR5 Fiber Printer Studio")
-        title.setStyleSheet("font-size: 22pt; font-weight: 600; color: #569CD6;")
+        # 使用主题令牌
+        title.setStyleSheet(f"font-size: 22pt; font-weight: 600; color: {self.get_token('accent_link')};")
         title_layout.addWidget(title, 0, Qt.AlignmentFlag.AlignCenter)
         title_layout.addStretch()
         layout.addWidget(title_row)
@@ -185,7 +191,7 @@ class WelcomeWidget(QWidget):
 
         # 副标题
         subtitle = QLabel("专业的机械臂 FDM 打印脚本编辑器")
-        subtitle.setStyleSheet("font-size: 11pt; color: #8a8a8a;")
+        subtitle.setStyleSheet(f"font-size: 11pt; color: {self.get_token('text_muted')};")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
         self._subtitle_label = subtitle
@@ -198,7 +204,8 @@ class WelcomeWidget(QWidget):
             "- Ctrl+O 打开项目文件夹\n"
             "- Ctrl+S 保存当前脚本"
         )
-        tips.setStyleSheet("font-size: 11pt; color: #c8c8c8; line-height: 2;")
+        tips_color = self.get_token('text')
+        tips.setStyleSheet(f"font-size: 11pt; color: {tips_color}; line-height: 2;")
         tips.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(tips)
         self._tips_label = tips
@@ -206,15 +213,16 @@ class WelcomeWidget(QWidget):
         # 最近打开的文件
         if self.recent_files:
             recent_label = QLabel("最近打开")
-            recent_label.setStyleSheet("font-size: 11pt; color: #8a8a8a; margin-top: 8px;")
+            recent_label.setStyleSheet(f"font-size: 11pt; color: {self.get_token('text_muted')}; margin-top: 8px;")
             recent_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(recent_label)
             self._recent_label = recent_label
 
+            link_color = self.get_token('accent_link')
             for file_path in self.recent_files[:5]:
                 if os.path.exists(file_path):
                     file_name = os.path.basename(file_path)
-                    file_btn = QLabel(f"<a href='{file_path}' style='color: #569CD6; text-decoration: none;'>{file_name}</a>")
+                    file_btn = QLabel(f"<a href='{file_path}' style='color: {link_color}; text-decoration: none;'>{file_name}</a>")
                     file_btn.setStyleSheet("font-size: 11pt; padding: 2px 0;")
                     file_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
                     file_btn.setOpenExternalLinks(False)
@@ -226,14 +234,19 @@ class WelcomeWidget(QWidget):
 
         # 版本信息
         version = QLabel("v1.0 - Expert Edition")
-        version.setStyleSheet("font-size: 9pt; color: #5a5a5a;")
+        version.setStyleSheet(f"font-size: 9pt; color: {self.get_token('text_dim')};")
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version)
         self._version_label = version
 
+    def on_theme_changed(self, theme_id: str):
+        """主题变更回调"""
+        self.apply_theme()
+
     def apply_theme(self) -> None:
-        t = theme.current_tokens()
-        use_dark = t is theme.DARK
+        theme_mgr = get_theme_manager()
+        t = theme_mgr.current_tokens()
+        use_dark = theme_mgr.current_theme_id() == "dark"
 
         # Re-tint icon for the current theme
         if self._robot_icon_label is not None:
@@ -441,8 +454,9 @@ class DockableEditorWidget(QWidget):
 
     def apply_theme(self) -> None:
         """Apply the current app theme to tabs, welcome page, status bar and editors."""
-        t = theme.current_tokens()
-        use_dark = t is theme.DARK
+        theme_mgr = get_theme_manager()
+        t = theme_mgr.current_tokens()
+        use_dark = theme_mgr.current_theme_id() == "dark"
 
         tab_bar_bg = t["bg_tertiary"]
         tab_bg = t["bg_panel"] if use_dark else t["bg_tertiary"]

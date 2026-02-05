@@ -2,7 +2,6 @@ DEFAULTS: dict = {
     "robot": {
         "ip_addresses": ["192.168.137.120", "192.168.137.100", "192.168.1.106"],
         "default_ip": "192.168.1.106",
-        "speed_slider_default": 100,
         "auto_reconnect": True,
         "backend_id": "ur_rtde_cb3",
         "dashboard": {

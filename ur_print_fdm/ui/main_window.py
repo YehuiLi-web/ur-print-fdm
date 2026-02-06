@@ -1017,10 +1017,9 @@ class URPrintIDE(QMainWindow):
             self.queue_dialog.queue_list.itemDoubleClicked.connect(self.on_queue_item_double_clicked)
             # 设置当对话框关闭时，重置引用以便下次能重新创建
             self.queue_dialog.finished.connect(self.on_queue_dialog_closed)
-        else:
-            # 如果对话框已经存在，只是显示它
-            self.queue_dialog.show()
 
+        # 无论是否新建，都显示对话框
+        self.queue_dialog.show()
         # 确保对话框在前端显示
         self.queue_dialog.raise_()
         self.queue_dialog.activateWindow()
@@ -1429,24 +1428,8 @@ class URPrintIDE(QMainWindow):
                 if btn is not None:
                     btn.setIcon(icon_mgr.get_svg_icon(name, size))
 
-            # Run mode combo icons (preserve current selection)
-            if hasattr(self, "run_mode_combo") and self.run_mode_combo is not None:
-                current = None
-                try:
-                    current = self.run_mode_combo.currentData()
-                except Exception:
-                    current = None
-
-                self.run_mode_combo.clear()
-                self.run_mode_combo.addItem(
-                    icon_mgr.get_svg_icon("queue", (16, 16)), "生产模式", "production"
-                )
-                self.run_mode_combo.addItem(icon_mgr.get_svg_icon("robot", (16, 16)), "直连模式", "direct")
-
-                if current is not None:
-                    idx = self.run_mode_combo.findData(current)
-                    if idx >= 0:
-                        self.run_mode_combo.setCurrentIndex(idx)
+            # Run mode combo: 不再使用图标，保持纯文字
+            # (图标已在初始化时移除，此处无需重新设置)
 
             # File explorer embedded header buttons (if any)
             if hasattr(self, "project_widget") and self.project_widget is not None:
@@ -2133,7 +2116,7 @@ class URPrintIDE(QMainWindow):
 
             # 安全检查：只有当标定面板已实例化时才重置它的显示
             if hasattr(self, 'calib_widget') and self.calib_widget:
-                self.calib_widget.lbl_tcp_pos.setText("未连接")
+                self.calib_widget.manual_widget.lbl_tcp_pos.setText("未连接")
 
     def save_current_script(self):
         """保存当前编辑器内容到文件"""

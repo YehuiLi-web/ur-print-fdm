@@ -435,6 +435,14 @@ class _Assign(_Stmt):
 
 
 @dataclass(frozen=True)
+class _IndexAssign(_Stmt):
+    scope: str  # "global" | "local" | "auto"
+    name: str
+    index: _Expr
+    expr: _Expr
+
+
+@dataclass(frozen=True)
 class _ExprStmt(_Stmt):
     expr: _Expr
 
@@ -604,6 +612,18 @@ def _parse_script(text: str) -> tuple[tuple[_Stmt, ...], dict[str, _Def]]:
             name = lhs.split("[", 1)[0].strip()
             if not name or not (name[0].isalpha() or name[0] == "_"):
                 raise URScriptEstimateError(f"Unsupported assignment target: {lhs!r}")
+            if "[" in lhs and lhs.endswith("]"):
+                base = lhs[: lhs.find("[")].strip()
+                idx_expr = lhs[lhs.find("[") + 1 : -1].strip()
+                if not base or not idx_expr:
+                    raise URScriptEstimateError(f"Unsupported index assignment target: {lhs!r}")
+                idx += 1
+                return _IndexAssign(
+                    scope=scope,
+                    name=base,
+                    index=_parse_expr(idx_expr),
+                    expr=_parse_expr(rhs),
+                )
             idx += 1
             return _Assign(scope=scope, name=name, expr=_parse_expr(rhs))
 
@@ -888,7 +908,26 @@ class _Runtime:
             return
         if isinstance(stmt, _Assign):
             val = self._eval(stmt.expr)
+            if isinstance(val, (list, tuple)):
+                # URScript assigns lists/poses by value, not by reference.
+                val = list(val)
             self._set_var(stmt.scope, stmt.name, val)
+            return
+        if isinstance(stmt, _IndexAssign):
+            base = self._get_var(stmt.name)
+            if base is None:
+                raise URScriptEstimateError(f"Unknown identifier: {stmt.name}")
+            idx = int(float(self._eval(stmt.index)))
+            if idx < 0:
+                raise URScriptEstimateError("Negative index assignment is not supported")
+            if isinstance(base, tuple):
+                base = list(base)
+            if not isinstance(base, list):
+                raise URScriptEstimateError(f"Index assignment requires list, got {type(base).__name__}")
+            if idx >= len(base):
+                base.extend([0.0] * (idx + 1 - len(base)))
+            base[idx] = self._eval(stmt.expr)
+            self._set_var(stmt.scope, stmt.name, base)
             return
         if isinstance(stmt, _ExprStmt):
             self._eval(stmt.expr)

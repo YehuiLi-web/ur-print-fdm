@@ -25,6 +25,12 @@ def generate_qss(t: Dict[str, Any]) -> str:
             font-size: {t["size_base"]};
         }}
 
+        /* === Phase C: QLabel 透明背景，防止文字出现背景块 === */
+        QLabel {{
+            background: transparent;
+            color: {t["text"]};
+        }}
+
         /* === ToolBar / StatusBar === */
         QToolBar {{
             background-color: {t["bg_secondary"]};
@@ -53,14 +59,15 @@ def generate_qss(t: Dict[str, Any]) -> str:
             background: transparent;
         }}
 
-        /* 工具栏 ComboBox - 透明背景 */
+        /* 工具栏 ComboBox - 透明背景，文字左对齐 */
         QComboBox[ui_role="toolbar_combo"] {{
             background-color: transparent;
             border: 1px solid {t["border"]};
             border-radius: {t["radius"]};
-            padding: 4px {t["space_md"]};
+            padding: 4px 4px 4px 6px;
             color: {t["text"]};
             min-height: 20px;
+            text-align: left;
         }}
         QComboBox[ui_role="toolbar_combo"]:hover {{
             border-color: {t["border_light"]};
@@ -154,24 +161,61 @@ def generate_qss(t: Dict[str, Any]) -> str:
             padding-bottom: 4px;
         }}
 
-        /* === 输入控件 === */
+        /* === 输入控件 (Phase B 优化: 增强交互反馈) === */
         QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit, QTextBrowser {{
             background-color: {t["bg_secondary"]};
             border: 1px solid {t["border"]};
             border-radius: {t["radius"]};
-            padding: 5px {t["space_md"]};
+            padding: 6px {t["space_md"]};
             color: {t["text"]};
             selection-background-color: {t["selection_bg"]};
-            min-height: 22px;
+            min-height: 24px;
+        }}
+        QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover {{
+            border-color: {t["border_light"]};
+            background-color: {t["bg_panel"]};
         }}
         QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus, QTextEdit:focus, QTextBrowser:focus {{
-            border: 1px solid {t["accent_blue"]};
+            border: 1.5px solid {t["accent_blue"]};
+            background-color: {t["bg_panel"]};
+        }}
+        /* SpinBox 上下箭头按钮优化 */
+        QSpinBox::up-button, QDoubleSpinBox::up-button {{
+            subcontrol-origin: border;
+            subcontrol-position: top right;
+            width: 20px;
+            border-left: 1px solid {t["border"]};
+            border-bottom: 1px solid {t["border"]};
+            border-top-right-radius: {t["radius"]};
+            background-color: {t["bg_tertiary"]};
+        }}
+        QSpinBox::down-button, QDoubleSpinBox::down-button {{
+            subcontrol-origin: border;
+            subcontrol-position: bottom right;
+            width: 20px;
+            border-left: 1px solid {t["border"]};
+            border-bottom-right-radius: {t["radius"]};
+            background-color: {t["bg_tertiary"]};
+        }}
+        QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+        QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+            background-color: {t["bg_hover_strong"]};
+        }}
+        QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed,
+        QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {{
+            background-color: {t["bg_hover"]};
         }}
         QComboBox::drop-down {{
             subcontrol-origin: padding;
             subcontrol-position: top right;
-            width: 22px;
+            width: 24px;
             border-left: 1px solid {t["border"]};
+            border-top-right-radius: {t["radius"]};
+            border-bottom-right-radius: {t["radius"]};
+            background-color: {t["bg_tertiary"]};
+        }}
+        QComboBox::drop-down:hover {{
+            background-color: {t["bg_hover_strong"]};
         }}
 
         /* Combo dropdown list */
@@ -199,20 +243,24 @@ def generate_qss(t: Dict[str, Any]) -> str:
             color: {t["text_on_accent"]};
         }}
 
-        /* === 按钮 (通用) - 带微交互动效 === */
+        /* === 按钮 (通用) - Phase B 优化: 增强圆角与交互动效 === */
         QPushButton {{
             background-color: {t["btn_bg"]};
             border: 1px solid {t["btn_border"]};
-            border-radius: {t["radius"]};
-            padding: 6px 14px;
+            border-radius: 6px;
+            padding: 7px 16px;
             color: {t["btn_text"]};
-            min-height: 24px;
+            min-height: 26px;
+            font-weight: 500;
         }}
         QPushButton:hover {{
             background-color: {t["btn_bg_hover"]};
             border-color: {t["btn_border_hover"]};
         }}
-        QPushButton:pressed {{ background-color: {t["btn_bg_pressed"]}; }}
+        QPushButton:pressed {{
+            background-color: {t["btn_bg_pressed"]};
+            border-color: {t["accent_blue"]};
+        }}
         QPushButton:disabled {{
             background-color: {t["btn_disabled_bg"]};
             color: {t["btn_disabled_text"]};
@@ -394,21 +442,18 @@ def generate_qss(t: Dict[str, Any]) -> str:
         /* === 选项卡 === */
         QTabWidget::pane {{
             border: 1px solid {t["border_light"]};
-            top: -1px;
-            border-radius: 0 0 {t["radius"]} {t["radius"]};
+            border-top: none;
         }}
         QTabBar::tab {{
             background: {t["bg_panel"]};
             border: 1px solid {t["border_light"]};
+            border-bottom: none;
             padding: 6px 16px;
-            margin-right: 2px;
-            border-top-left-radius: {t["radius"]};
-            border-top-right-radius: {t["radius"]};
+            margin: 0;
             color: {t["text_muted"]};
         }}
         QTabBar::tab:selected {{
             background: {t["bg_main"]};
-            border-bottom-color: {t["bg_main"]};
             color: {t["text"]};
             font-weight: bold;
         }}
@@ -418,15 +463,21 @@ def generate_qss(t: Dict[str, Any]) -> str:
         QDockWidget {{
             titlebar-close-icon: url(none);
             titlebar-normal-icon: url(none);
+            background-color: {t["bg_secondary"]};
         }}
         QDockWidget::title {{
             background: {t["bg_tertiary"]};
             text-align: left;
-            padding: 4px 8px;
-            border: none;
+            padding: 8px 12px;
+            border-bottom: 1px solid {t["border_light"]};
             font-weight: 500;
-            font-size: {t["size_small"]};
+            font-size: {t["size_base"]};
             color: {t["text_muted"]};
+        }}
+        QDockWidget > QWidget {{
+            padding: 0px;
+            margin: 0px;
+            background-color: transparent;
         }}
 
         /* === GroupBox === */
@@ -463,32 +514,32 @@ def generate_qss(t: Dict[str, Any]) -> str:
             border-radius: 3px;
         }}
 
-        /* === 滚动条 - VSCode 风格（无轨道背景，直接浮在内容上） === */
+        /* === 滚动条 - Phase B 优化: 更细腻的圆角滚动条 === */
         QScrollBar:vertical {{
             border: none;
             background: transparent;
-            width: 14px;
+            width: 12px;
             margin: 0;
-            padding: 0;
+            padding: 2px;
         }}
         QScrollBar:horizontal {{
             border: none;
             background: transparent;
-            height: 14px;
+            height: 12px;
             margin: 0;
-            padding: 0;
+            padding: 2px;
         }}
         QScrollBar::handle:vertical {{
             background: {t["scroll_handle"]};
-            min-height: 20px;
-            border-radius: 0;
-            margin: 0 3px;
+            min-height: 30px;
+            border-radius: 4px;
+            margin: 2px;
         }}
         QScrollBar::handle:horizontal {{
             background: {t["scroll_handle"]};
-            min-width: 20px;
-            border-radius: 0;
-            margin: 3px 0;
+            min-width: 30px;
+            border-radius: 4px;
+            margin: 2px;
         }}
         QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
             background: {t["scroll_handle_hover"]};
@@ -516,32 +567,98 @@ def generate_qss(t: Dict[str, Any]) -> str:
             background: transparent;
         }}
 
-        /* === TreeWidget === */
+        /* === TreeWidget - 专业软件风格 === */
         QTreeWidget {{
             background-color: {t["bg_secondary"]};
             border: none;
             outline: none;
             font-size: {t["size_base"]};
-            padding: 4px 0;
+            padding: 0;
         }}
         QTreeWidget::item {{
             padding: 4px 6px;
-            border-radius: 3px;
+            border: none;
+            border-radius: 0;
+            margin: 0;
+            min-height: 22px;
+        }}
+        QTreeWidget::item:hover {{
+            background-color: {t["tree_hover_bg"]};
+        }}
+        QTreeWidget::item:selected {{
+            background-color: {t["tree_selection_bg"]};
+            color: {t["text"]};
+        }}
+        QTreeWidget::item:selected:active {{
+            background-color: {t["tree_selection_bg"]};
+            color: {t["text"]};
+        }}
+        QTreeWidget::item:selected:!active {{
+            background-color: {t["tree_selection_bg"]};
+            color: {t["text"]};
+        }}
+        /* Branch 区域样式 - 与 item 保持一致 */
+        QTreeWidget::branch {{
+            background-color: transparent;
+            border: none;
+        }}
+        QTreeWidget::branch:hover {{
+            background-color: {t["tree_hover_bg"]};
+        }}
+        QTreeWidget::branch:selected {{
+            background-color: {t["tree_selection_bg"]};
+        }}
+        QTreeWidget::branch:selected:active {{
+            background-color: {t["tree_selection_bg"]};
+        }}
+        QTreeWidget::branch:selected:!active {{
+            background-color: {t["tree_selection_bg"]};
+        }}
+        /* TreeWidget 专用滚动条 - 默认隐藏，悬停显示 */
+        QTreeWidget QScrollBar:vertical {{
+            border: none;
+            background: {t["bg_secondary"]};
+            width: 10px;
+            margin: 0;
+            padding: 0;
+        }}
+        QTreeWidget QScrollBar::handle:vertical {{
+            background: transparent;
+            min-height: 30px;
+            border-radius: 0;
             margin: 0;
         }}
-        QTreeWidget::item:hover {{ background-color: {t["bg_hover"]}; }}
-        QTreeWidget::item:selected {{
-            background-color: {t["accent"]};
-            color: {t["text_on_accent"]};
+        QTreeWidget QScrollBar::handle:vertical:hover {{
+            background: {t["scroll_handle_hover"]};
         }}
-        QTreeWidget::item:selected:active {{ background-color: {t["accent_hover"]}; }}
+        QTreeWidget QScrollBar::add-line:vertical,
+        QTreeWidget QScrollBar::sub-line:vertical {{
+            height: 0;
+            background: transparent;
+        }}
+        QTreeWidget QScrollBar::add-page:vertical,
+        QTreeWidget QScrollBar::sub-page:vertical {{
+            background: transparent;
+        }}
+        /* 折叠状态箭头 - 包括选中状态 */
         QTreeWidget::branch:has-children:!has-siblings:closed,
         QTreeWidget::branch:closed:has-children:has-siblings {{
             border: none;
             image: url({t["tree_branch_closed_icon"]});
         }}
+        QTreeWidget::branch:has-children:!has-siblings:closed:selected,
+        QTreeWidget::branch:closed:has-children:has-siblings:selected {{
+            border: none;
+            image: url({t["tree_branch_closed_icon"]});
+        }}
+        /* 展开状态箭头 - 包括选中状态 */
         QTreeWidget::branch:open:has-children:!has-siblings,
         QTreeWidget::branch:open:has-children:has-siblings {{
+            border: none;
+            image: url({t["tree_branch_open_icon"]});
+        }}
+        QTreeWidget::branch:open:has-children:!has-siblings:selected,
+        QTreeWidget::branch:open:has-children:has-siblings:selected {{
             border: none;
             image: url({t["tree_branch_open_icon"]});
         }}

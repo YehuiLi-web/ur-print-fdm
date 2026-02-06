@@ -7,7 +7,13 @@ class HelpDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("UR5 Fiber Printer Studio - 技术说明文档中心")
-        self.setMinimumSize(1000, 700)
+        # Phase D 优化: 使用相对尺寸，基于父窗口大小自适应
+        if parent:
+            parent_size = parent.size()
+            self.resize(int(parent_size.width() * 0.75), int(parent_size.height() * 0.8))
+        else:
+            self.resize(900, 650)
+        self.setMinimumSize(700, 500)  # 设置合理的最小尺寸
         self._browsers = []
         self._page_html_getters = [
             self._get_user_guide_html,
@@ -79,23 +85,27 @@ class HelpDialog(QDialog):
 
     def _get_common_style(self):
         t = theme.current_tokens()
+        # Phase C 优化: 使用 bg_panel (纯白) 作为文档背景，与外层 bg_main 形成层次
         return f"""
         <style>
             body {{
-                font-family: 'Segoe UI', sans-serif;
-                line-height: 1.6;
+                font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+                line-height: 1.7;
                 color: {t["text"]};
-                background-color: {t["bg_secondary"]};
+                background-color: {t["bg_panel"]};
+                padding: 5px 15px;
             }}
             h1 {{
                 color: {t["accent_link"]};
                 border-bottom: 2px solid {t["accent_link"]};
                 padding-bottom: 10px;
+                margin-top: 10px;
             }}
             h2 {{
                 color: {t["accent_blue"]};
                 margin-top: 25px;
                 border-bottom: 1px solid {t["border_light"]};
+                padding-bottom: 6px;
             }}
             h3 {{
                 color: {t["text"]};
@@ -105,31 +115,39 @@ class HelpDialog(QDialog):
             code {{
                 background-color: {t["bg_tertiary"]};
                 color: {t["accent_link"]};
-                padding: 2px 5px;
-                border-radius: 3px;
-                font-family: 'Consolas', monospace;
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 0.95em;
             }}
             pre {{
                 background-color: {t["bg_tertiary"]};
                 padding: 15px;
                 border-left: 4px solid {t["accent_link"]};
-                font-family: 'Consolas', monospace;
+                border-radius: 4px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                overflow-x: auto;
             }}
             .tip {{
-                background-color: {t["bg_panel"]};
+                background-color: {t["bg_tertiary"]};
                 border-left: 4px solid {t["success"]};
-                padding: 10px;
-                margin: 10px 0;
+                padding: 12px 15px;
+                margin: 15px 0;
+                border-radius: 0 4px 4px 0;
             }}
             .warning {{
-                background-color: {t["bg_panel"]};
+                background-color: {t["bg_tertiary"]};
                 border-left: 4px solid {t["danger"]};
-                padding: 10px;
-                margin: 10px 0;
+                padding: 12px 15px;
+                margin: 15px 0;
+                border-radius: 0 4px 4px 0;
             }}
             table {{ border-collapse: collapse; width: 100%; margin: 15px 0; }}
-            th, td {{ border: 1px solid {t["border_light"]}; padding: 8px; text-align: left; }}
-            th {{ background-color: {t["bg_tertiary"]}; }}
+            th, td {{ border: 1px solid {t["border"]}; padding: 10px 12px; text-align: left; }}
+            th {{ background-color: {t["bg_tertiary"]}; font-weight: 600; }}
+            tr:hover {{ background-color: {t["bg_hover"]}; }}
+            ul, ol {{ padding-left: 25px; }}
+            li {{ margin: 6px 0; }}
         </style>
         """
 

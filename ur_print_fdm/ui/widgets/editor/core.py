@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMenu
 from PyQt6.QtGui import QColor, QFont, QAction
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent
 from ur_print_fdm.ui.resources.icon_manager import IconManager
 from ur_print_fdm.ui import theme
 from ur_print_fdm.ui.mixins.theme_aware import ThemeAwareMixin
@@ -14,6 +14,7 @@ except ImportError:
     QsciAPIs = None
 
 from .dialogs import FindReplaceDialog
+from .urscript_lexer import URScriptLexer, ALL_URSCRIPT_COMMANDS, get_urscript_completions
 
 class CodeEditor(QsciScintilla, ThemeAwareMixin):
     """
@@ -27,8 +28,81 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
         self._is_qsci = QsciLexerPython is not None
         self._find_dialog = None
         self._find_replace_dialog = None
+        self._scrollbar_visible = False  # 滚动条悬停状态
         self.setup_editor()
         self.apply_theme()
+        # 安装事件过滤器以检测鼠标悬停
+        self.installEventFilter(self)
+        self.setMouseTracking(True)
+
+    def eventFilter(self, obj, event):
+        """事件过滤器，用于处理鼠标悬停事件控制滚动条显示"""
+        if obj == self:
+            if event.type() == QEvent.Type.Enter:
+                self._show_scrollbar(True)
+            elif event.type() == QEvent.Type.Leave:
+                self._show_scrollbar(False)
+        return super().eventFilter(obj, event)
+
+    def _show_scrollbar(self, visible: bool):
+        """显示或隐藏滚动条"""
+        if self._scrollbar_visible == visible:
+            return
+        self._scrollbar_visible = visible
+
+        t = theme.current_tokens()
+        scrollbar = self.verticalScrollBar()
+        if visible:
+            # 显示滚动条
+            scrollbar.setStyleSheet(f"""
+                QScrollBar:vertical {{
+                    border: none;
+                    background: {t["bg_secondary"]};
+                    width: 10px;
+                    margin: 0;
+                    padding: 0;
+                }}
+                QScrollBar::handle:vertical {{
+                    background: {t["scroll_handle"]};
+                    min-height: 20px;
+                    border-radius: 0;
+                    margin: 0;
+                }}
+                QScrollBar::handle:vertical:hover {{
+                    background: {t["scroll_handle_hover"]};
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    height: 0;
+                    background: transparent;
+                }}
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                    background: transparent;
+                }}
+            """)
+        else:
+            # 隐藏滚动条（透明手柄）
+            scrollbar.setStyleSheet(f"""
+                QScrollBar:vertical {{
+                    border: none;
+                    background: {t["bg_secondary"]};
+                    width: 10px;
+                    margin: 0;
+                    padding: 0;
+                }}
+                QScrollBar::handle:vertical {{
+                    background: transparent;
+                    min-height: 20px;
+                    border-radius: 0;
+                    margin: 0;
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    height: 0;
+                    background: transparent;
+                }}
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                    background: transparent;
+                }}
+            """)
 
     def on_theme_changed(self, theme_id: str):
         """主题变更回调"""
@@ -45,22 +119,15 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
         font.setFixedPitch(True)
 
         # --- 1. 语法高亮与词法分析 ---
-        self.lexer = QsciLexerPython()
+        # 使用自定义 URScript lexer
+        self.lexer = URScriptLexer(self)
         self.lexer.setFont(font)
         self.setFont(font)
 
         # --- 2. 自动补全 API 注入 ---
         self.api = QsciAPIs(self.lexer)
-        ur_commands = [
-            "movel", "movej", "movec", "speedl", "speedj", "servoj", "servoc", "speed_stop",
-            "get_actual_tcp_pose", "get_actual_joint_positions", "set_tcp", "set_payload",
-            "sleep", "textmsg", "popup", "d2r", "r2d", "sin", "cos", "tan", "sqrt", "log", "exp", "not",
-            "modbus_set_output_register", "set_standard_digital_out", "stopl", "stopj",
-            "pose_trans", "pose_inv", "pose_add",
-            "set_tool_digital_out", "wait_wait", "get_inverse_kin", "def", "end", "thread", "global", "local",
-            "get_standard_digital_in", "get_tool_digital_in"
-        ]
-        for cmd in ur_commands:
+        # 使用扩展的 URScript 命令列表
+        for cmd in get_urscript_completions():
             self.api.add(cmd)
         self.api.prepare()
 
@@ -85,13 +152,8 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
         self.setMarginWidth(0, "  000  ")  # 预留足够宽度 + 两侧padding
         self.setMarginLineNumbers(0, True)
 
-        # 添加一个细分隔线边距 (Margin 1) - 分隔行号和代码
-        self.setMarginType(1, QsciScintilla.MarginType.SymbolMargin)
-        self.setMarginWidth(1, 2)  # 2像素宽的分隔
-        self.setMarginSensitivity(1, False)
-
-        # 折叠边距
-        self.setFolding(QsciScintilla.FoldStyle.BoxedTreeFoldStyle)
+        # 折叠边距 - 使用简洁样式
+        self.setFolding(QsciScintilla.FoldStyle.PlainFoldStyle)
 
         # 设置行号样式
         self.setMarginsFont(font)  # 使用相同字体
@@ -127,7 +189,7 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
             self.setStyleSheet(f"background-color: {t['bg_secondary']}; color: {t['text']};")
             return
 
-        # Scrollbars: keep VSCode-like floating handle, but theme-aware.
+        # 基础样式（滚动条由事件过滤器动态控制）
         self.setStyleSheet(
             f"""
             QsciScintilla {{
@@ -135,53 +197,26 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
             }}
             QScrollBar:vertical {{
                 background: {t["bg_secondary"]};
-                width: 14px;
+                width: 10px;
                 margin: 0;
                 border: none;
             }}
             QScrollBar::handle:vertical {{
-                background: {t["scroll_handle"]};
+                background: transparent;
                 min-height: 20px;
                 border-radius: 0;
-                margin: 0 3px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: {t["scroll_handle_hover"]};
-            }}
-            QScrollBar::handle:vertical:pressed {{
-                background: {t["scroll_handle_pressed"]};
+                margin: 0;
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0;
-                background: {t["bg_secondary"]};
+                background: transparent;
             }}
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-                background: {t["bg_secondary"]};
+                background: transparent;
             }}
             QScrollBar:horizontal {{
-                background: {t["bg_secondary"]};
-                height: 14px;
-                margin: 0;
-                border: none;
-            }}
-            QScrollBar::handle:horizontal {{
-                background: {t["scroll_handle"]};
-                min-width: 20px;
-                border-radius: 0;
-                margin: 3px 0;
-            }}
-            QScrollBar::handle:horizontal:hover {{
-                background: {t["scroll_handle_hover"]};
-            }}
-            QScrollBar::handle:horizontal:pressed {{
-                background: {t["scroll_handle_pressed"]};
-            }}
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-                width: 0;
-                background: {t["bg_secondary"]};
-            }}
-            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
-                background: {t["bg_secondary"]};
+                height: 0;
+                background: transparent;
             }}
             QAbstractScrollArea::corner {{
                 background: {t["bg_secondary"]};
@@ -189,59 +224,73 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
             """
         )
 
+        # 重置滚动条状态
+        self._scrollbar_visible = False
+
         # Base paper/ink
         bg_color = QColor(t["bg_secondary"])
         text_color = QColor(t["text"])
 
-        # 设置默认背景和文本颜色
-        self.lexer.setDefaultPaper(bg_color)
-        self.lexer.setDefaultColor(text_color)
-
-        # Also set editor-level defaults to avoid fallback black text on light themes.
-        try:
-            self.setPaper(bg_color)
-            self.setColor(text_color)
-        except Exception:
-            pass
-
-        # 为所有可能的样式类型设置统一的背景色
-        # 这样可以确保整个编辑器区域都是统一的背景
-        for style_num in range(128):  # QScintilla支持最多128种样式
-            try:
-                self.lexer.setPaper(bg_color, style_num)
-            except Exception:
-                pass
-
-        # 从主题令牌获取语法高亮颜色（不再硬编码）
+        # 从主题令牌获取语法高亮颜色
         syntax = {
-            "op": t.get("syntax_operator", t["text_muted"]),
+            "default": t["text"],
             "comment": t.get("syntax_comment", t["text_muted"]),
             "keyword": t.get("syntax_keyword", t["accent_blue"]),
-            "number": t.get("syntax_number", t["text"]),
-            "string": t.get("syntax_string", t["text"]),
-            "func": t.get("syntax_function", t["accent_link"]),
+            "type": t.get("syntax_type", "#4EC9B0"),  # 类型关键字
+            "motion": t.get("syntax_motion", "#DCDCAA"),  # 运动指令
+            "io": t.get("syntax_io", "#C586C0"),  # IO 指令
+            "robot": t.get("syntax_robot", "#9CDCFE"),  # 机器人指令
+            "math": t.get("syntax_math", t.get("syntax_number", "#B5CEA8")),  # 数学函数
+            "pose": t.get("syntax_pose", t.get("syntax_string", "#CE9178")),  # 位姿函数
+            "string": t.get("syntax_string", "#CE9178"),
+            "number": t.get("syntax_number", "#B5CEA8"),
+            "operator": t.get("syntax_operator", t["text_muted"]),
+            "identifier": t["text"],
+            "force": t.get("syntax_force", "#FF8C00"),  # 力控指令
         }
 
-        # 设置语法元素的前景色（背景色已经在上面统一设置了）
-        self.lexer.setColor(QColor(syntax["op"]), QsciLexerPython.Operator)
-        self.lexer.setColor(QColor(syntax["comment"]), QsciLexerPython.Comment)
-        self.lexer.setColor(QColor(syntax["comment"]), QsciLexerPython.CommentBlock)
-        self.lexer.setColor(QColor(syntax["keyword"]), QsciLexerPython.Keyword)
-        self.lexer.setColor(QColor(syntax["number"]), QsciLexerPython.Number)
-        self.lexer.setColor(QColor(syntax["string"]), QsciLexerPython.DoubleQuotedString)
-        self.lexer.setColor(QColor(syntax["string"]), QsciLexerPython.SingleQuotedString)
-        self.lexer.setColor(QColor(syntax["string"]), QsciLexerPython.TripleDoubleQuotedString)
-        self.lexer.setColor(QColor(syntax["string"]), QsciLexerPython.TripleSingleQuotedString)
-
-        # 设置函数名颜色
-        func_attr = "FunctionMethodName" if hasattr(QsciLexerPython, "FunctionMethodName") else "ClassName"
-        self.lexer.setColor(QColor(syntax["func"]), getattr(QsciLexerPython, func_attr))
-
-        # 设置标识符和默认文本颜色
-        if hasattr(QsciLexerPython, "Identifier"):
-            self.lexer.setColor(text_color, QsciLexerPython.Identifier)
-        if hasattr(QsciLexerPython, "Default"):
-            self.lexer.setColor(text_color, QsciLexerPython.Default)
+        # 为 URScript lexer 设置颜色
+        if isinstance(self.lexer, URScriptLexer):
+            # 先设置背景色（会为所有样式设置）
+            self.lexer.setPaper(bg_color)
+            # 再设置各样式的前景色
+            self.lexer.setColors({
+                URScriptLexer.Default: QColor(syntax["default"]),
+                URScriptLexer.Comment: QColor(syntax["comment"]),
+                URScriptLexer.Keyword: QColor(syntax["keyword"]),
+                URScriptLexer.Type: QColor(syntax["type"]),
+                URScriptLexer.MotionCommand: QColor(syntax["motion"]),
+                URScriptLexer.IOCommand: QColor(syntax["io"]),
+                URScriptLexer.RobotCommand: QColor(syntax["robot"]),
+                URScriptLexer.MathFunction: QColor(syntax["math"]),
+                URScriptLexer.PoseFunction: QColor(syntax["pose"]),
+                URScriptLexer.String: QColor(syntax["string"]),
+                URScriptLexer.Number: QColor(syntax["number"]),
+                URScriptLexer.Operator: QColor(syntax["operator"]),
+                URScriptLexer.Identifier: QColor(syntax["identifier"]),
+                URScriptLexer.ForceCommand: QColor(syntax["force"]),
+            })
+        else:
+            # 后备方案：使用 Python lexer 的样式
+            self.lexer.setDefaultPaper(bg_color)
+            self.lexer.setDefaultColor(text_color)
+            self.lexer.setColor(QColor(syntax["operator"]), QsciLexerPython.Operator)
+            self.lexer.setColor(QColor(syntax["comment"]), QsciLexerPython.Comment)
+            self.lexer.setColor(QColor(syntax["comment"]), QsciLexerPython.CommentBlock)
+            self.lexer.setColor(QColor(syntax["keyword"]), QsciLexerPython.Keyword)
+            self.lexer.setColor(QColor(syntax["number"]), QsciLexerPython.Number)
+            self.lexer.setColor(QColor(syntax["string"]), QsciLexerPython.DoubleQuotedString)
+            self.lexer.setColor(QColor(syntax["string"]), QsciLexerPython.SingleQuotedString)
+            self.lexer.setColor(QColor(syntax["string"]), QsciLexerPython.TripleDoubleQuotedString)
+            self.lexer.setColor(QColor(syntax["string"]), QsciLexerPython.TripleSingleQuotedString)
+            # 设置函数名颜色
+            func_attr = "FunctionMethodName" if hasattr(QsciLexerPython, "FunctionMethodName") else "ClassName"
+            self.lexer.setColor(QColor(syntax["motion"]), getattr(QsciLexerPython, func_attr))
+            # 设置标识符和默认文本颜色
+            if hasattr(QsciLexerPython, "Identifier"):
+                self.lexer.setColor(text_color, QsciLexerPython.Identifier)
+            if hasattr(QsciLexerPython, "Default"):
+                self.lexer.setColor(text_color, QsciLexerPython.Default)
 
         # Ensure lexer is active and re-colorize the document.
         try:
@@ -257,23 +306,35 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
         self.setCaretLineVisible(True)
         self.setCaretLineBackgroundColor(QColor(t["bg_hover"]))
 
-        # Margins
-        margin_bg = t["bg_secondary"] if use_dark else t["bg_tertiary"]
-        self.setMarginsBackgroundColor(QColor(margin_bg))
+        # Margins - 行号区域与代码区域使用相同背景色
+        self.setMarginsBackgroundColor(QColor(t["bg_secondary"]))
         self.setMarginsForegroundColor(QColor(t["text_dim"]))
-        self.setMarginBackgroundColor(1, QColor(t["border_light"]))
 
-        # Folding markers
-        self.setFoldMarginColors(QColor(t["bg_tertiary"]), QColor(t["bg_secondary"]))
-        self.setMarkerBackgroundColor(QColor(t["accent_link"]), QsciScintilla.SC_MARKNUM_FOLDER)
-        self.setMarkerForegroundColor(QColor(t["bg_secondary"]), QsciScintilla.SC_MARKNUM_FOLDER)
-        self.setMarkerBackgroundColor(QColor(t["accent_link"]), QsciScintilla.SC_MARKNUM_FOLDEROPEN)
-        self.setMarkerForegroundColor(QColor(t["bg_secondary"]), QsciScintilla.SC_MARKNUM_FOLDEROPEN)
-        self.setMarkerBackgroundColor(QColor(t["accent_link"]), QsciScintilla.SC_MARKNUM_FOLDEREND)
-        self.setMarkerBackgroundColor(QColor(t["accent_link"]), QsciScintilla.SC_MARKNUM_FOLDEROPENMID)
-        self.setMarkerBackgroundColor(QColor(t["border"]), QsciScintilla.SC_MARKNUM_FOLDERSUB)
-        self.setMarkerBackgroundColor(QColor(t["border"]), QsciScintilla.SC_MARKNUM_FOLDERTAIL)
-        self.setMarkerBackgroundColor(QColor(t["border"]), QsciScintilla.SC_MARKNUM_FOLDERMIDTAIL)
+        # 折叠边距颜色设置
+        # 注意：setFoldMarginColors(fore, back) - fore是折叠区域背景，back是折叠线颜色
+        self.setFoldMarginColors(QColor(t["bg_secondary"]), QColor(t["bg_secondary"]))
+
+        # 折叠标记颜色 - 注意：Foreground是填充色，Background是边框色
+        fold_symbol_color = QColor(t["text_muted"])  # 符号颜色（+/-）
+        fold_bg = QColor(t["bg_secondary"])  # 背景色
+
+        # 设置折叠标记颜色 - 前景色是符号填充色，背景色是符号边框色
+        self.setMarkerForegroundColor(fold_symbol_color, QsciScintilla.SC_MARKNUM_FOLDER)
+        self.setMarkerBackgroundColor(fold_symbol_color, QsciScintilla.SC_MARKNUM_FOLDER)
+        self.setMarkerForegroundColor(fold_symbol_color, QsciScintilla.SC_MARKNUM_FOLDEROPEN)
+        self.setMarkerBackgroundColor(fold_symbol_color, QsciScintilla.SC_MARKNUM_FOLDEROPEN)
+        self.setMarkerForegroundColor(fold_symbol_color, QsciScintilla.SC_MARKNUM_FOLDEREND)
+        self.setMarkerBackgroundColor(fold_symbol_color, QsciScintilla.SC_MARKNUM_FOLDEREND)
+        self.setMarkerForegroundColor(fold_symbol_color, QsciScintilla.SC_MARKNUM_FOLDEROPENMID)
+        self.setMarkerBackgroundColor(fold_symbol_color, QsciScintilla.SC_MARKNUM_FOLDEROPENMID)
+        # 折叠线条颜色
+        fold_line_color = QColor(t["border_light"])
+        self.setMarkerForegroundColor(fold_line_color, QsciScintilla.SC_MARKNUM_FOLDERSUB)
+        self.setMarkerBackgroundColor(fold_line_color, QsciScintilla.SC_MARKNUM_FOLDERSUB)
+        self.setMarkerForegroundColor(fold_line_color, QsciScintilla.SC_MARKNUM_FOLDERTAIL)
+        self.setMarkerBackgroundColor(fold_line_color, QsciScintilla.SC_MARKNUM_FOLDERTAIL)
+        self.setMarkerForegroundColor(fold_line_color, QsciScintilla.SC_MARKNUM_FOLDERMIDTAIL)
+        self.setMarkerBackgroundColor(fold_line_color, QsciScintilla.SC_MARKNUM_FOLDERMIDTAIL)
 
         # 缩进引导线颜色
         indent_guide_color = t["border_light"] if use_dark else t["border"]

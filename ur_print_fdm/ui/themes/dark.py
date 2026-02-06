@@ -24,6 +24,9 @@ DARK: ThemeTokens = {
     "accent_blue": "#2196F3",
     "accent_link": "#569CD6",
     "selection_bg": "#264f78",
+    # 文件树样式 - 专业软件风格
+    "tree_selection_bg": "#094771",  # 蓝色选中背景（VS Code 风格）
+    "tree_hover_bg": "rgba(255, 255, 255, 0.05)",  # 悬停时微弱白色
     "primary_green": "#388E3C",
     "primary_green_hover": "#43A047",
     "primary_green_pressed": "#2E7D32",
@@ -73,4 +76,12 @@ DARK: ThemeTokens = {
     "syntax_number": "#B5CEA8",
     "syntax_string": "#CE9178",
     "syntax_function": "#DCDCAA",
+    # URScript 特定语法高亮
+    "syntax_type": "#4EC9B0",       # 类型关键字 (global, local, True, False)
+    "syntax_motion": "#DCDCAA",     # 运动指令 (movel, movej, movec)
+    "syntax_io": "#C586C0",         # IO 指令 (set_digital_out, get_digital_in)
+    "syntax_robot": "#9CDCFE",      # 机器人指令 (get_actual_tcp_pose, set_tcp)
+    "syntax_math": "#D7BA7D",       # 数学函数 (sin, cos, sqrt) - 金色
+    "syntax_pose": "#4FC1FF",       # 位姿函数 (pose_trans, pose_inv) - 亮青色
+    "syntax_force": "#FF8C00",      # 力控指令 (force, zero_ftsensor)
 }

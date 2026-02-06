@@ -37,6 +37,8 @@ class ColorTokens(TypedDict, total=False):
 
     # 选择背景
     selection_bg: str
+    tree_selection_bg: str  # 文件树选中背景
+    tree_hover_bg: str  # 文件树悬停背景
 
     # 状态色
     primary_green: str

@@ -19,65 +19,105 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction
 from ur_print_fdm.config import config_manager
+from ur_print_fdm.ui import theme
 
 
 # =============================================================================
-# 工业风格样式常量
+# 主题感知样式生成函数
 # =============================================================================
-PANEL_STYLE = """
-    CollapsibleBox {
-        background-color: #252526;
-        border: 1px solid #333337;
-    }
-"""
+def get_panel_style(t):
+    """获取面板样式"""
+    return f"""
+        CollapsibleBox {{
+            background-color: transparent;
+            border: 1px solid {t["border_light"]};
+            border-radius: 4px;
+        }}
+    """
 
-HEADER_STYLE = """
-    QFrame {
-        background-color: #333337;
-        border-bottom: 1px solid #2d2d2d;
-    }
-"""
+def get_header_style(t):
+    """获取标题栏样式"""
+    return f"""
+        QFrame {{
+            background-color: transparent;
+            border-bottom: 1px solid {t["border_light"]};
+        }}
+    """
 
-HEADER_COLLAPSED_STYLE = """
-    QFrame {
-        background-color: #333337;
-    }
-"""
+def get_header_collapsed_style(t):
+    """获取折叠状态标题栏样式"""
+    return f"""
+        QFrame {{
+            background-color: transparent;
+        }}
+    """
 
-TOGGLE_BTN_STYLE = """
-    QToolButton { border: none; background: transparent; color: #aaa; }
-    QToolButton:hover { color: #fff; }
-"""
+def get_toggle_btn_style(t):
+    """获取折叠按钮样式"""
+    return f"""
+        QToolButton {{ border: none; background: transparent; color: {t["text_muted"]}; }}
+        QToolButton:hover {{ color: {t["text"]}; }}
+    """
 
-LIST_WIDGET_STYLE = """
-    QListWidget {
-        background-color: transparent;
-        border: none;
-        outline: none;
-    }
-    QListWidget::item {
-        background-color: transparent;
-        border: none;
-        padding: 2px;
-    }
-    QListWidget::item:selected {
-        background-color: transparent;
-        border: none;
-    }
-    QScrollBar:vertical {
-        border: none;
-        background: #1e1e1e;
-        width: 8px;
-        margin: 0px;
-    }
-    QScrollBar::handle:vertical {
-        background: #424242;
-        border-radius: 4px;
-        min-height: 20px;
-    }
-    QScrollBar::handle:vertical:hover { background: #616161; }
-    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-"""
+def get_list_widget_style(t):
+    """获取列表组件样式"""
+    return f"""
+        QListWidget {{
+            background-color: {t["bg_secondary"]};
+            border: none;
+            outline: none;
+        }}
+        QListWidget::item {{
+            background-color: transparent;
+            border: none;
+            padding: 0px;
+            margin: 0px;
+        }}
+        QListWidget::item:selected {{
+            background-color: transparent;
+            border: none;
+        }}
+        QScrollBar:vertical {{
+            width: 0px;
+            background: transparent;
+        }}
+    """
+
+def get_content_frame_style(t):
+    """获取内容框样式"""
+    return f"background-color: {t['bg_panel']}; border-radius: 3px;"
+
+def get_context_menu_style(t):
+    """获取右键菜单样式"""
+    return f"""
+        QMenu {{
+            background-color: {t["bg_tertiary"]};
+            border: 1px solid {t["border"]};
+            color: {t["text"]};
+        }}
+        QMenu::item:selected {{
+            background-color: {t["accent"]};
+            color: {t["text_on_accent"]};
+        }}
+        QMenu::item:checked {{
+            background-color: {t["bg_hover"]};
+        }}
+    """
+
+def get_progress_bar_style(t, chunk_color=None):
+    """获取进度条样式"""
+    color = chunk_color or t["accent_blue"]
+    return f"""
+        QProgressBar {{ border: 1px solid {t["border"]}; background-color: {t["bg_secondary"]}; border-radius: 2px; }}
+        QProgressBar::chunk {{ background-color: {color}; }}
+    """
+
+def get_joint_bar_style(t, chunk_color):
+    """获取关节进度条样式"""
+    return f"""
+        QProgressBar {{ background: {t["bg_hover"]}; border: none; }}
+        QProgressBar::chunk {{ background: {chunk_color}; }}
+    """
 
 
 # =============================================================================
@@ -93,8 +133,7 @@ class CollapsibleBox(QFrame):
         self.default_collapsed = default_collapsed
         self._is_collapsed = False
 
-        self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
-        self.setStyleSheet(PANEL_STYLE)
+        self.setFrameStyle(QFrame.Shape.NoFrame)
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -103,16 +142,12 @@ class CollapsibleBox(QFrame):
         # --- Header Bar ---
         self.header = QFrame()
         self.header.setMinimumHeight(26)
-        self.header.setStyleSheet(HEADER_STYLE)
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(8, 4, 8, 4)
         header_layout.setSpacing(8)
 
         # Title
         self.title_label = QLabel(title.upper())
-        self.title_label.setStyleSheet(
-            "font-weight: bold; color: #cccccc; font-size: 8.5pt; letter-spacing: 0.5px;"
-        )
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
 
@@ -121,7 +156,6 @@ class CollapsibleBox(QFrame):
         self.toggle_btn.setArrowType(Qt.ArrowType.DownArrow)
         self.toggle_btn.setCheckable(True)
         self.toggle_btn.setChecked(False)
-        self.toggle_btn.setStyleSheet(TOGGLE_BTN_STYLE)
         self.toggle_btn.clicked.connect(self.toggle_content)
         header_layout.addWidget(self.toggle_btn)
 
@@ -134,9 +168,24 @@ class CollapsibleBox(QFrame):
         self.content_layout.setSpacing(4)
         self.main_layout.addWidget(self.content_area)
 
+        # 应用主题
+        self.apply_theme()
+
         # 加载保存的状态
         if self.state_key:
             self._load_state()
+
+    def apply_theme(self):
+        """应用主题样式"""
+        t = theme.current_tokens()
+        self.setStyleSheet(get_panel_style(t))
+        self.header.setStyleSheet(
+            get_header_collapsed_style(t) if self._is_collapsed else get_header_style(t)
+        )
+        self.title_label.setStyleSheet(
+            f"font-weight: bold; color: {t['text']}; font-size: 8.5pt; letter-spacing: 0.5px;"
+        )
+        self.toggle_btn.setStyleSheet(get_toggle_btn_style(t))
 
     def toggle_content(self):
         """切换折叠状态"""
@@ -146,8 +195,9 @@ class CollapsibleBox(QFrame):
             Qt.ArrowType.RightArrow if self._is_collapsed else Qt.ArrowType.DownArrow
         )
         # 更新header样式
+        t = theme.current_tokens()
         self.header.setStyleSheet(
-            HEADER_COLLAPSED_STYLE if self._is_collapsed else HEADER_STYLE
+            get_header_collapsed_style(t) if self._is_collapsed else get_header_style(t)
         )
         self.toggled.emit(not self._is_collapsed)
         # 保存状态
@@ -202,12 +252,21 @@ class ReorderablePanel(QListWidget):
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.setSpacing(2)
-        self.setStyleSheet(LIST_WIDGET_STYLE)
+        self.setSpacing(0)
 
         self._panel_widgets = []
         self._items = []  # 保存 item 引用
         self._widget_to_item = {}  # widget -> item 映射
+
+        # 应用主题
+        self.apply_theme()
+
+    def apply_theme(self):
+        """应用主题样式"""
+        t = theme.current_tokens()
+        self.setStyleSheet(get_list_widget_style(t))
+        # 确保 viewport 背景色也正确设置
+        self.viewport().setStyleSheet(f"background-color: {t['bg_secondary']};")
 
     def add_section(self, widget):
         """添加面板"""
@@ -270,17 +329,19 @@ class PrintStatsContent(QWidget):
         grid.setSpacing(6)
 
         self.lbl_elapsed = QLabel("00:00:00")
-        self.lbl_elapsed.setStyleSheet("font-family: Consolas; color: #fff; font-weight: bold;")
         self.lbl_remain = QLabel("--:--:--")
-        self.lbl_remain.setStyleSheet("font-family: Consolas; color: #aaa;")
         self.lbl_layer = QLabel("0 / 0")
-        self.lbl_layer.setStyleSheet("font-family: Consolas; color: #aaa;")
 
-        grid.addWidget(QLabel("已用时间:", styleSheet="color:#888;"), 0, 0)
+        # 标签引用，用于主题更新
+        self.lbl_elapsed_title = QLabel("已用时间:")
+        self.lbl_remain_title = QLabel("剩余时间:")
+        self.lbl_layer_title = QLabel("当前层:")
+
+        grid.addWidget(self.lbl_elapsed_title, 0, 0)
         grid.addWidget(self.lbl_elapsed, 0, 1, alignment=Qt.AlignmentFlag.AlignRight)
-        grid.addWidget(QLabel("剩余时间:", styleSheet="color:#888;"), 1, 0)
+        grid.addWidget(self.lbl_remain_title, 1, 0)
         grid.addWidget(self.lbl_remain, 1, 1, alignment=Qt.AlignmentFlag.AlignRight)
-        grid.addWidget(QLabel("当前层:", styleSheet="color:#888;"), 2, 0)
+        grid.addWidget(self.lbl_layer_title, 2, 0)
         grid.addWidget(self.lbl_layer, 2, 1, alignment=Qt.AlignmentFlag.AlignRight)
         layout.addLayout(grid)
 
@@ -288,17 +349,27 @@ class PrintStatsContent(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(8)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar { border: 1px solid #3e3e42; background-color: #252526; border-radius: 2px; }
-            QProgressBar::chunk { background-color: #0e639c; }
-        """)
         layout.addWidget(self.progress_bar)
 
         # 百分比
         self.lbl_percent = QLabel("0.0 %")
         self.lbl_percent.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.lbl_percent.setStyleSheet("font-size: 8pt; color: #4FC3F7;")
         layout.addWidget(self.lbl_percent)
+
+        # 应用主题
+        self.apply_theme()
+
+    def apply_theme(self):
+        """应用主题样式"""
+        t = theme.current_tokens()
+        self.lbl_elapsed.setStyleSheet(f"font-family: Consolas; color: {t['text']}; font-weight: bold;")
+        self.lbl_remain.setStyleSheet(f"font-family: Consolas; color: {t['text_muted']};")
+        self.lbl_layer.setStyleSheet(f"font-family: Consolas; color: {t['text_muted']};")
+        self.lbl_elapsed_title.setStyleSheet(f"color: {t['text_dim']};")
+        self.lbl_remain_title.setStyleSheet(f"color: {t['text_dim']};")
+        self.lbl_layer_title.setStyleSheet(f"color: {t['text_dim']};")
+        self.progress_bar.setStyleSheet(get_progress_bar_style(t))
+        self.lbl_percent.setStyleSheet(f"font-size: 8pt; color: {t['accent_blue']};")
 
     def update_data(self, elapsed_sec, total_sec, current_layer=0, total_layers=0):
         """更新数据"""
@@ -325,32 +396,48 @@ class TemperatureContent(QWidget):
         layout.setSpacing(6)
 
         # 喷头温度
-        nozzle_frame = QFrame()
-        nozzle_frame.setStyleSheet("background-color: #2a2a2a; border-radius: 3px;")
-        nozzle_layout = QHBoxLayout(nozzle_frame)
+        self.nozzle_frame = QFrame()
+        nozzle_layout = QHBoxLayout(self.nozzle_frame)
         nozzle_layout.setContentsMargins(8, 6, 8, 6)
 
-        nozzle_layout.addWidget(QLabel("喷头", styleSheet="color: #888; font-size: 8pt;"))
+        self.lbl_nozzle_title = QLabel("喷头")
+        nozzle_layout.addWidget(self.lbl_nozzle_title)
         nozzle_layout.addStretch()
         self.lbl_nozzle = QLabel("0")
-        self.lbl_nozzle.setStyleSheet("color: #FF7043; font-size: 14pt; font-weight: bold; font-family: Consolas;")
         nozzle_layout.addWidget(self.lbl_nozzle)
-        nozzle_layout.addWidget(QLabel("°C", styleSheet="color: #666; font-size: 8pt;"))
-        layout.addWidget(nozzle_frame)
+        self.lbl_nozzle_unit = QLabel("°C")
+        nozzle_layout.addWidget(self.lbl_nozzle_unit)
+        layout.addWidget(self.nozzle_frame)
 
         # 热床温度
-        bed_frame = QFrame()
-        bed_frame.setStyleSheet("background-color: #2a2a2a; border-radius: 3px;")
-        bed_layout = QHBoxLayout(bed_frame)
+        self.bed_frame = QFrame()
+        bed_layout = QHBoxLayout(self.bed_frame)
         bed_layout.setContentsMargins(8, 6, 8, 6)
 
-        bed_layout.addWidget(QLabel("热床", styleSheet="color: #888; font-size: 8pt;"))
+        self.lbl_bed_title = QLabel("热床")
+        bed_layout.addWidget(self.lbl_bed_title)
         bed_layout.addStretch()
         self.lbl_bed = QLabel("0")
-        self.lbl_bed.setStyleSheet("color: #FFA726; font-size: 14pt; font-weight: bold; font-family: Consolas;")
         bed_layout.addWidget(self.lbl_bed)
-        bed_layout.addWidget(QLabel("°C", styleSheet="color: #666; font-size: 8pt;"))
-        layout.addWidget(bed_frame)
+        self.lbl_bed_unit = QLabel("°C")
+        bed_layout.addWidget(self.lbl_bed_unit)
+        layout.addWidget(self.bed_frame)
+
+        # 应用主题
+        self.apply_theme()
+
+    def apply_theme(self):
+        """应用主题样式"""
+        t = theme.current_tokens()
+        frame_style = get_content_frame_style(t)
+        self.nozzle_frame.setStyleSheet(frame_style)
+        self.bed_frame.setStyleSheet(frame_style)
+        self.lbl_nozzle_title.setStyleSheet(f"color: {t['text_dim']}; font-size: 8pt;")
+        self.lbl_nozzle.setStyleSheet(f"color: {t['danger']}; font-size: 14pt; font-weight: bold; font-family: Consolas;")
+        self.lbl_nozzle_unit.setStyleSheet(f"color: {t['text_dim']}; font-size: 8pt;")
+        self.lbl_bed_title.setStyleSheet(f"color: {t['text_dim']}; font-size: 8pt;")
+        self.lbl_bed.setStyleSheet(f"color: {t['warning']}; font-size: 14pt; font-weight: bold; font-family: Consolas;")
+        self.lbl_bed_unit.setStyleSheet(f"color: {t['text_dim']}; font-size: 8pt;")
 
     def update_data(self, nozzle_temp, bed_temp):
         """更新温度数据"""
@@ -368,33 +455,54 @@ class PrintParamsContent(QWidget):
 
         # 打印速度
         speed_row = QHBoxLayout()
-        speed_row.addWidget(QLabel("打印速度", styleSheet="color: #888; font-size: 8.5pt;"))
+        self.lbl_speed_title = QLabel("打印速度")
+        speed_row.addWidget(self.lbl_speed_title)
         speed_row.addStretch()
         self.lbl_print_speed = QLabel("0")
-        self.lbl_print_speed.setStyleSheet("color: #4FC3F7; font-family: Consolas; font-size: 9pt;")
         speed_row.addWidget(self.lbl_print_speed)
-        speed_row.addWidget(QLabel("mm/s", styleSheet="color: #666; font-size: 8pt;"))
+        self.lbl_speed_unit = QLabel("mm/s")
+        speed_row.addWidget(self.lbl_speed_unit)
         layout.addLayout(speed_row)
 
         # 挤出速度
         extr_row = QHBoxLayout()
-        extr_row.addWidget(QLabel("挤出速度", styleSheet="color: #888; font-size: 8.5pt;"))
+        self.lbl_extr_title = QLabel("挤出速度")
+        extr_row.addWidget(self.lbl_extr_title)
         extr_row.addStretch()
         self.lbl_extr_speed = QLabel("0")
-        self.lbl_extr_speed.setStyleSheet("color: #81C784; font-family: Consolas; font-size: 9pt;")
         extr_row.addWidget(self.lbl_extr_speed)
-        extr_row.addWidget(QLabel("mm/s", styleSheet="color: #666; font-size: 8pt;"))
+        self.lbl_extr_unit = QLabel("mm/s")
+        extr_row.addWidget(self.lbl_extr_unit)
         layout.addLayout(extr_row)
 
         # 流量
         flow_row = QHBoxLayout()
-        flow_row.addWidget(QLabel("流量", styleSheet="color: #888; font-size: 8.5pt;"))
+        self.lbl_flow_title = QLabel("流量")
+        flow_row.addWidget(self.lbl_flow_title)
         flow_row.addStretch()
         self.lbl_flow = QLabel("100")
-        self.lbl_flow.setStyleSheet("color: #FFA726; font-family: Consolas; font-size: 9pt;")
         flow_row.addWidget(self.lbl_flow)
-        flow_row.addWidget(QLabel("%", styleSheet="color: #666; font-size: 8pt;"))
+        self.lbl_flow_unit = QLabel("%")
+        flow_row.addWidget(self.lbl_flow_unit)
         layout.addLayout(flow_row)
+
+        # 应用主题
+        self.apply_theme()
+
+    def apply_theme(self):
+        """应用主题样式"""
+        t = theme.current_tokens()
+        title_style = f"color: {t['text_dim']}; font-size: 8.5pt;"
+        unit_style = f"color: {t['text_dim']}; font-size: 8pt;"
+        self.lbl_speed_title.setStyleSheet(title_style)
+        self.lbl_extr_title.setStyleSheet(title_style)
+        self.lbl_flow_title.setStyleSheet(title_style)
+        self.lbl_speed_unit.setStyleSheet(unit_style)
+        self.lbl_extr_unit.setStyleSheet(unit_style)
+        self.lbl_flow_unit.setStyleSheet(unit_style)
+        self.lbl_print_speed.setStyleSheet(f"color: {t['accent_blue']}; font-family: Consolas; font-size: 9pt;")
+        self.lbl_extr_speed.setStyleSheet(f"color: {t['success']}; font-family: Consolas; font-size: 9pt;")
+        self.lbl_flow.setStyleSheet(f"color: {t['warning']}; font-family: Consolas; font-size: 9pt;")
 
     def update_data(self, print_speed, extr_speed, flow_rate):
         """更新参数数据"""
@@ -412,18 +520,29 @@ class MotionContent(QWidget):
         layout.setSpacing(6)
 
         # TCP速度显示
-        vel_frame = QFrame()
-        vel_frame.setStyleSheet("background-color: #2a2a2a; border-radius: 3px;")
-        vel_layout = QHBoxLayout(vel_frame)
+        self.vel_frame = QFrame()
+        vel_layout = QHBoxLayout(self.vel_frame)
         vel_layout.setContentsMargins(8, 6, 8, 6)
 
-        vel_layout.addWidget(QLabel("TCP 速度", styleSheet="color: #888; font-size: 8pt;"))
+        self.lbl_vel_title = QLabel("TCP 速度")
+        vel_layout.addWidget(self.lbl_vel_title)
         vel_layout.addStretch()
         self.lbl_velocity = QLabel("0.0")
-        self.lbl_velocity.setStyleSheet("color: #4FC3F7; font-size: 14pt; font-weight: bold; font-family: Consolas;")
         vel_layout.addWidget(self.lbl_velocity)
-        vel_layout.addWidget(QLabel("mm/s", styleSheet="color: #666; font-size: 8pt;"))
-        layout.addWidget(vel_frame)
+        self.lbl_vel_unit = QLabel("mm/s")
+        vel_layout.addWidget(self.lbl_vel_unit)
+        layout.addWidget(self.vel_frame)
+
+        # 应用主题
+        self.apply_theme()
+
+    def apply_theme(self):
+        """应用主题样式"""
+        t = theme.current_tokens()
+        self.vel_frame.setStyleSheet(get_content_frame_style(t))
+        self.lbl_vel_title.setStyleSheet(f"color: {t['text_dim']}; font-size: 8pt;")
+        self.lbl_velocity.setStyleSheet(f"color: {t['accent_blue']}; font-size: 14pt; font-weight: bold; font-family: Consolas;")
+        self.lbl_vel_unit.setStyleSheet(f"color: {t['text_dim']}; font-size: 8pt;")
 
     def update_data(self, velocity):
         """更新速度数据"""
@@ -440,6 +559,7 @@ class JointsContent(QWidget):
 
         self.bars = []
         self.vals = []
+        self.name_labels = []
         names = ["Base", "Shoulder", "Elbow", "Wrist1", "Wrist2", "Wrist3"]
 
         for name in names:
@@ -448,21 +568,16 @@ class JointsContent(QWidget):
 
             lbl = QLabel(name)
             lbl.setFixedWidth(55)
-            lbl.setStyleSheet("color: #999; font-size: 8.5pt;")
+            self.name_labels.append(lbl)
 
             bar = QProgressBar()
             bar.setRange(0, 720)  # 使用0-720范围，避免负数问题
             bar.setFixedHeight(4)
             bar.setTextVisible(False)
-            bar.setStyleSheet(
-                "QProgressBar { background: #333; border: none; } "
-                "QProgressBar::chunk { background: #66BB6A; }"
-            )
 
             val = QLabel("0°")
             val.setFixedWidth(40)
             val.setAlignment(Qt.AlignmentFlag.AlignRight)
-            val.setStyleSheet("color: #ccc; font-family: Consolas; font-size: 8.5pt;")
 
             row.addWidget(lbl)
             row.addWidget(bar)
@@ -472,10 +587,24 @@ class JointsContent(QWidget):
             self.bars.append(bar)
             self.vals.append(val)
 
+        # 应用主题
+        self.apply_theme()
+
+    def apply_theme(self):
+        """应用主题样式"""
+        t = theme.current_tokens()
+        for lbl in self.name_labels:
+            lbl.setStyleSheet(f"color: {t['text_muted']}; font-size: 8.5pt;")
+        for val in self.vals:
+            val.setStyleSheet(f"color: {t['text']}; font-family: Consolas; font-size: 8.5pt;")
+        for bar in self.bars:
+            bar.setStyleSheet(get_joint_bar_style(t, t['success']))
+
     def update_data(self, joints):
         """更新关节数据 (joints为弧度)"""
         if not joints:
             return
+        t = theme.current_tokens()
         for i, rad in enumerate(joints[:6]):
             deg = rad * 57.2958  # 转换为度
             # 将-360~360映射到0~720
@@ -486,15 +615,12 @@ class JointsContent(QWidget):
 
             # 颜色逻辑
             adeg = abs(deg)
-            color = "#66BB6A"  # Green
+            color = t["success"]  # Green
             if adeg > 175:
-                color = "#FFA726"  # Orange
+                color = t["warning"]  # Orange
             if adeg > 350:
-                color = "#EF5350"  # Red
-            self.bars[i].setStyleSheet(
-                f"QProgressBar {{ background: #333; border: none; }} "
-                f"QProgressBar::chunk {{ background: {color}; }}"
-            )
+                color = t["danger"]  # Red
+            self.bars[i].setStyleSheet(get_joint_bar_style(t, color))
 
 
 class TCPPoseContent(QWidget):
@@ -513,6 +639,8 @@ class TCPPoseContent(QWidget):
         self.customContextMenuRequested.connect(self._show_context_menu)
 
         self.labels = []
+        self.name_labels = []
+        self.unit_labels = []
         names = [("X", "mm"), ("Y", "mm"), ("Z", "mm"), ("Rx", "°"), ("Ry", "°"), ("Rz", "°")]
 
         for name, unit in names:
@@ -521,15 +649,14 @@ class TCPPoseContent(QWidget):
 
             lbl = QLabel(name)
             lbl.setFixedWidth(25)
-            lbl.setStyleSheet("color: #888; font-size: 8.5pt;")
+            self.name_labels.append(lbl)
 
             val = QLabel("0.00")
             val.setAlignment(Qt.AlignmentFlag.AlignRight)
-            val.setStyleSheet("color: #eee; font-family: Consolas; font-size: 9pt;")
 
             unit_lbl = QLabel(unit)
             unit_lbl.setFixedWidth(25)
-            unit_lbl.setStyleSheet("color: #666; font-size: 8pt;")
+            self.unit_labels.append(unit_lbl)
 
             row.addWidget(lbl)
             row.addWidget(val, 1)
@@ -538,19 +665,24 @@ class TCPPoseContent(QWidget):
 
             self.labels.append(val)
 
+        # 应用主题
+        self.apply_theme()
+
+    def apply_theme(self):
+        """应用主题样式"""
+        t = theme.current_tokens()
+        for lbl in self.name_labels:
+            lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 8.5pt;")
+        for lbl in self.unit_labels:
+            lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 8pt;")
+        for val in self.labels:
+            val.setStyleSheet(f"color: {t['text']}; font-family: Consolas; font-size: 9pt;")
+
     def _show_context_menu(self, pos):
         """显示右键菜单"""
+        t = theme.current_tokens()
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #2d2d2d;
-                border: 1px solid #3e3e42;
-                color: #e0e0e0;
-            }
-            QMenu::item:selected {
-                background-color: #094771;
-            }
-        """)
+        menu.setStyleSheet(get_context_menu_style(t))
 
         action_copy = QAction("复制全部坐标", self)
         action_copy.triggered.connect(self._copy_all_coordinates)
@@ -592,6 +724,8 @@ class TCPOffsetContent(QWidget):
         layout.setSpacing(2)
 
         self.labels = []
+        self.name_labels = []
+        self.unit_labels = []
         names = [("dX", "mm"), ("dY", "mm"), ("dZ", "mm"), ("dRx", "°"), ("dRy", "°"), ("dRz", "°")]
 
         for name, unit in names:
@@ -600,15 +734,14 @@ class TCPOffsetContent(QWidget):
 
             lbl = QLabel(name)
             lbl.setFixedWidth(30)
-            lbl.setStyleSheet("color: #888; font-size: 8.5pt;")
+            self.name_labels.append(lbl)
 
             val = QLabel("0.00")
             val.setAlignment(Qt.AlignmentFlag.AlignRight)
-            val.setStyleSheet("color: #aaa; font-family: Consolas; font-size: 9pt;")
 
             unit_lbl = QLabel(unit)
             unit_lbl.setFixedWidth(25)
-            unit_lbl.setStyleSheet("color: #666; font-size: 8pt;")
+            self.unit_labels.append(unit_lbl)
 
             row.addWidget(lbl)
             row.addWidget(val, 1)
@@ -616,6 +749,19 @@ class TCPOffsetContent(QWidget):
             layout.addLayout(row)
 
             self.labels.append(val)
+
+        # 应用主题
+        self.apply_theme()
+
+    def apply_theme(self):
+        """应用主题样式"""
+        t = theme.current_tokens()
+        for lbl in self.name_labels:
+            lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 8.5pt;")
+        for lbl in self.unit_labels:
+            lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 8pt;")
+        for val in self.labels:
+            val.setStyleSheet(f"color: {t['text_muted']}; font-family: Consolas; font-size: 9pt;")
 
     def update_data(self, offset):
         """更新偏移数据"""
@@ -648,7 +794,7 @@ class StatusWidget(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("background-color: #1e1e1e; color: #e0e0e0;")
+        self.setObjectName("StatusWidget")  # 设置对象名称用于样式选择器
         self.setMinimumWidth(260)
 
         # 打印计时器
@@ -665,11 +811,13 @@ class StatusWidget(QWidget):
         self.customContextMenuRequested.connect(self._show_panel_menu)
 
         self._init_ui()
+        # 应用主题
+        self.apply_theme()
 
     def _init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         # 可拖拽面板容器
@@ -745,20 +893,9 @@ class StatusWidget(QWidget):
 
     def _show_panel_menu(self, pos):
         """显示面板选择菜单"""
+        t = theme.current_tokens()
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #2d2d2d;
-                border: 1px solid #3e3e42;
-                color: #e0e0e0;
-            }
-            QMenu::item:selected {
-                background-color: #094771;
-            }
-            QMenu::item:checked {
-                background-color: #3e3e42;
-            }
-        """)
+        menu.setStyleSheet(get_context_menu_style(t))
 
         for state_key, name, _ in self.PANEL_DEFS:
             action = QAction(name, self)
@@ -884,9 +1021,33 @@ class StatusWidget(QWidget):
         pass
 
     def apply_theme(self):
-        """应用主题 (兼容main_window接口)"""
-        # 当前使用固定的工业风格，暂不支持主题切换
-        pass
+        """应用主题样式"""
+        t = theme.current_tokens()
+
+        # 直接使用样式表设置背景色，确保与文件资源管理器一致
+        self.setStyleSheet(f"""
+            QWidget#StatusWidget {{
+                background-color: {t['bg_secondary']};
+                border-left: 1px solid {t['border_light']};
+            }}
+        """)
+
+        # 更新面板容器样式
+        self.panel.apply_theme()
+
+        # 更新所有子面板样式
+        for section in self._sections.values():
+            if hasattr(section, 'apply_theme'):
+                section.apply_theme()
+
+        # 更新所有内容组件样式
+        content_widgets = [
+            self.print_stats, self.temperature, self.print_params,
+            self.motion, self.joints, self.tcp_pose, self.tcp_offset
+        ]
+        for widget in content_widgets:
+            if hasattr(widget, 'apply_theme'):
+                widget.apply_theme()
 
     def start_print_timer(self, start_seconds=0):
         """开始打印计时器 (兼容main_window接口)"""

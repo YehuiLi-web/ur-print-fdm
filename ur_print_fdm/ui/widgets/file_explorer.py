@@ -110,7 +110,7 @@ class FileExplorerWidget(QWidget):
     def init_ui(self):
         """初始化界面"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(0, 0, 0, 0)  # 移除边距，让滚动条紧贴边缘
         layout.setSpacing(0)
 
         # === 文件树 ===
@@ -126,16 +126,13 @@ class FileExplorerWidget(QWidget):
         self.tree.setIndentation(18)
         self.tree.setIconSize(QSize(16, 16))
 
-        # 行高与内边距，便于点击
-        self.tree.setStyleSheet("""
-            QTreeWidget::item {
-                padding: 5px 6px;
-                min-height: 22px;
-            }
-        """)
+        # 样式由全局主题统一管理，不再使用内联样式
 
-        # 安装事件过滤器以捕获键盘事件
+        # 安装事件过滤器以捕获键盘事件和鼠标悬停事件
         self.tree.installEventFilter(self)
+        # 启用鼠标追踪以检测悬停
+        self.tree.setMouseTracking(True)
+        self.setMouseTracking(True)
 
         # 设置表头自适应
         header = self.tree.header()
@@ -147,6 +144,9 @@ class FileExplorerWidget(QWidget):
 
         # 初始化根节点
         self.root_item = None
+
+        # 滚动条悬停状态
+        self._scrollbar_visible = False
 
     def create_root_header_widget(self, project_name):
         """创建嵌入根节点的标题组件（包含图标、项目名和功能按钮）"""
@@ -174,15 +174,33 @@ class FileExplorerWidget(QWidget):
 
         layout.addStretch()
 
-        # 创建功能按钮 helper（样式由全局主题 QToolButton 提供）
+        # 创建功能按钮 helper（带悬停效果）
+        from ur_print_fdm.ui.theme_manager import get_theme_manager
+        t = get_theme_manager().current_tokens()
+
         def create_btn(icon_name, tooltip, slot):
             btn = QToolButton()
             btn.setIcon(self.icon_manager.get_action_icon(icon_name))
-            btn.setIconSize(QSize(16, 16))  # 增大图标尺寸
-            btn.setFixedSize(22, 22)  # 稍微增大按钮尺寸
+            btn.setIconSize(QSize(16, 16))
+            btn.setFixedSize(22, 22)
             btn.setToolTip(tooltip)
             btn.setAutoRaise(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(slot)
+            # 添加悬停效果样式
+            btn.setStyleSheet(f"""
+                QToolButton {{
+                    border: none;
+                    background: transparent;
+                    border-radius: 4px;
+                }}
+                QToolButton:hover {{
+                    background-color: {t['bg_hover']};
+                }}
+                QToolButton:pressed {{
+                    background-color: {t['bg_hover_strong']};
+                }}
+            """)
             self._root_header_buttons.append((btn, icon_name))
             return btn
 
@@ -196,10 +214,27 @@ class FileExplorerWidget(QWidget):
         return widget
 
     def refresh_header_icons(self) -> None:
-        """Re-apply themed icons for the embedded header buttons (after theme switch)."""
+        """Re-apply themed icons and styles for the embedded header buttons (after theme switch)."""
+        from ur_print_fdm.ui.theme_manager import get_theme_manager
+        t = get_theme_manager().current_tokens()
+
         for btn, icon_name in list(getattr(self, "_root_header_buttons", []) or []):
             try:
                 btn.setIcon(self.icon_manager.get_action_icon(icon_name))
+                # 更新悬停效果样式
+                btn.setStyleSheet(f"""
+                    QToolButton {{
+                        border: none;
+                        background: transparent;
+                        border-radius: 4px;
+                    }}
+                    QToolButton:hover {{
+                        background-color: {t['bg_hover']};
+                    }}
+                    QToolButton:pressed {{
+                        background-color: {t['bg_hover_strong']};
+                    }}
+                """)
             except Exception:
                 pass
 
@@ -237,25 +272,95 @@ class FileExplorerWidget(QWidget):
         shortcut_open.activated.connect(self.open_selected_file)
 
     def eventFilter(self, obj, event):
-        """事件过滤器，用于处理键盘事件"""
-        if obj == self.tree and event.type() == event.Type.KeyPress:
-            # Delete: 删除
-            if event.key() == Qt.Key.Key_Delete:
-                self.handle_delete_key()
-                return True
-            # Ctrl+C: 复制
-            elif event.key() == Qt.Key.Key_C and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-                self.copy_files()
-                return True
-            # Ctrl+X: 剪切
-            elif event.key() == Qt.Key.Key_X and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-                self.cut_files()
-                return True
-            # Ctrl+V: 粘贴
-            elif event.key() == Qt.Key.Key_V and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-                self.paste_files()
-                return True
+        """事件过滤器，用于处理键盘事件和鼠标悬停事件"""
+        from PyQt6.QtCore import QEvent
+
+        # 处理鼠标进入/离开事件 - 控制滚动条显示
+        if obj == self.tree:
+            if event.type() == QEvent.Type.Enter:
+                self._show_scrollbar(True)
+            elif event.type() == QEvent.Type.Leave:
+                self._show_scrollbar(False)
+            elif event.type() == QEvent.Type.KeyPress:
+                # Delete: 删除
+                if event.key() == Qt.Key.Key_Delete:
+                    self.handle_delete_key()
+                    return True
+                # Ctrl+C: 复制
+                elif event.key() == Qt.Key.Key_C and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                    self.copy_files()
+                    return True
+                # Ctrl+X: 剪切
+                elif event.key() == Qt.Key.Key_X and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                    self.cut_files()
+                    return True
+                # Ctrl+V: 粘贴
+                elif event.key() == Qt.Key.Key_V and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                    self.paste_files()
+                    return True
         return super().eventFilter(obj, event)
+
+    def _show_scrollbar(self, visible: bool):
+        """显示或隐藏滚动条"""
+        if self._scrollbar_visible == visible:
+            return
+        self._scrollbar_visible = visible
+
+        from ur_print_fdm.ui.theme_manager import get_theme_manager
+        t = get_theme_manager().current_tokens()
+
+        scrollbar = self.tree.verticalScrollBar()
+        if visible:
+            # 显示滚动条
+            scrollbar.setStyleSheet(f"""
+                QScrollBar:vertical {{
+                    border: none;
+                    background: {t["bg_secondary"]};
+                    width: 10px;
+                    margin: 0;
+                    padding: 0;
+                }}
+                QScrollBar::handle:vertical {{
+                    background: {t["scroll_handle"]};
+                    min-height: 30px;
+                    border-radius: 0;
+                    margin: 0;
+                }}
+                QScrollBar::handle:vertical:hover {{
+                    background: {t["scroll_handle_hover"]};
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    height: 0;
+                    background: transparent;
+                }}
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                    background: transparent;
+                }}
+            """)
+        else:
+            # 隐藏滚动条（透明手柄）
+            scrollbar.setStyleSheet(f"""
+                QScrollBar:vertical {{
+                    border: none;
+                    background: {t["bg_secondary"]};
+                    width: 10px;
+                    margin: 0;
+                    padding: 0;
+                }}
+                QScrollBar::handle:vertical {{
+                    background: transparent;
+                    min-height: 30px;
+                    border-radius: 0;
+                    margin: 0;
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    height: 0;
+                    background: transparent;
+                }}
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                    background: transparent;
+                }}
+            """)
 
     def open_project(self):
         """打开项目目录"""

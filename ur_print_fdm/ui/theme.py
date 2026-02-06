@@ -672,23 +672,59 @@ def _dark_theme_legacy(t: dict) -> str:
             padding: 4px 0;
         }}
         QTreeWidget::item {{
-            padding: 4px 6px;
-            border-radius: 3px;
+            padding: 5px 6px;
+            border-radius: 0;
             margin: 0;
+            min-height: 22px;
         }}
         QTreeWidget::item:hover {{ background-color: {t["bg_hover"]}; }}
         QTreeWidget::item:selected {{
             background-color: {t["accent"]};
             color: {t["text_on_accent"]};
         }}
-        QTreeWidget::item:selected:active {{ background-color: {t["accent_hover"]}; }}
+        QTreeWidget::item:selected:active {{
+            background-color: {t["accent"]};
+            color: {t["text_on_accent"]};
+        }}
+        QTreeWidget::item:selected:!active {{
+            background-color: {t["accent"]};
+            color: {t["text_on_accent"]};
+        }}
+        /* Branch 区域样式 - 统一选择颜色，消除分层效果 */
+        QTreeWidget::branch {{
+            background-color: transparent;
+        }}
+        QTreeWidget::branch:hover {{
+            background-color: {t["bg_hover"]};
+        }}
+        QTreeWidget::branch:selected {{
+            background-color: {t["accent"]};
+        }}
+        QTreeWidget::branch:selected:active {{
+            background-color: {t["accent"]};
+        }}
+        QTreeWidget::branch:selected:!active {{
+            background-color: {t["accent"]};
+        }}
+        /* 折叠状态箭头 - 包括选中状态 */
         QTreeWidget::branch:has-children:!has-siblings:closed,
         QTreeWidget::branch:closed:has-children:has-siblings {{
             border: none;
             image: url({t["tree_branch_closed_icon"]});
         }}
+        QTreeWidget::branch:has-children:!has-siblings:closed:selected,
+        QTreeWidget::branch:closed:has-children:has-siblings:selected {{
+            border: none;
+            image: url({t["tree_branch_closed_icon"]});
+        }}
+        /* 展开状态箭头 - 包括选中状态 */
         QTreeWidget::branch:open:has-children:!has-siblings,
         QTreeWidget::branch:open:has-children:has-siblings {{
+            border: none;
+            image: url({t["tree_branch_open_icon"]});
+        }}
+        QTreeWidget::branch:open:has-children:!has-siblings:selected,
+        QTreeWidget::branch:open:has-children:has-siblings:selected {{
             border: none;
             image: url({t["tree_branch_open_icon"]});
         }}

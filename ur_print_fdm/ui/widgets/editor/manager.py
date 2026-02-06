@@ -370,7 +370,7 @@ class DockableEditorWidget(QWidget):
         self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
         self.tabs.tabCloseRequested.connect(self.close_tab)
 
-        # 样式定义 - 彻底模拟 VSCode 滚动行为
+        # 样式定义 - VSCode 风格标签栏（隐藏滚动按钮，保留滚轮切换）
         self.tabs.setStyleSheet("""
             QTabWidget::pane {
                 border: none;
@@ -394,39 +394,19 @@ class DockableEditorWidget(QWidget):
             QTabBar::tab:selected {
                 background-color: #1e1e1e;
                 color: #ffffff;
-                border-bottom: 1px solid #1e1e1e; /* 视觉融合 */
+                border-bottom: 1px solid #1e1e1e;
                 border-top: 1px solid #007ACC;
             }
             QTabBar::tab:hover:!selected {
                 background-color: #3e3e42;
             }
-
-            /* === 核心修复：滚动按钮 (Scroller) === */
+            /* 隐藏滚动按钮 */
             QTabBar::scroller {
-                width: 24px;
-                border: none;
-                background-color: #252526;
+                width: 0px;
             }
-
-            /* 隐藏滚动按钮中的边框和背景，使其看起来像浮动图标 */
             QTabBar QToolButton {
-                border: none;
-                background-color: #252526;
-                padding: 0px;
-            }
-
-            QTabBar QToolButton:hover {
-                background-color: #3e3e42;
-            }
-
-            /* 去除左侧箭头按钮可能产生的偏移阴影 */
-            QTabBar QToolButton::right-arrow {
-                image: none; /* 如果你有自定义图标可以用图标 */
                 width: 0px;
-            }
-            QTabBar QToolButton::left-arrow {
-                image: none;
-                width: 0px;
+                height: 0px;
             }
         """)
 
@@ -497,28 +477,13 @@ class DockableEditorWidget(QWidget):
                     background-color: {hover};
                     color: {t["text"]};
                 }}
-
-                /* Scroll buttons (scroller) */
+                /* 隐藏滚动按钮 */
                 QTabBar::scroller {{
-                    width: 24px;
-                    border: none;
-                    background-color: {tab_bar_bg};
+                    width: 0px;
                 }}
                 QTabBar QToolButton {{
-                    border: none;
-                    background-color: {tab_bar_bg};
-                    padding: 0px;
-                }}
-                QTabBar QToolButton:hover {{
-                    background-color: {hover};
-                }}
-                QTabBar QToolButton::right-arrow {{
-                    image: none;
                     width: 0px;
-                }}
-                QTabBar QToolButton::left-arrow {{
-                    image: none;
-                    width: 0px;
+                    height: 0px;
                 }}
                 """
             )

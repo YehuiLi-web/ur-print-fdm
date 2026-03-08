@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git remote set-url:*)",
+      "Bash(git push:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python:*)",
+      "Bash(git checkout:*)",
+      "Bash(\"C:\\\\Users\\\\24988\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\":*)",
+      "Bash(build.bat)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(pyinstaller:*)"
+    ]
+  }
+}

@@ -6,7 +6,11 @@
       "Bash(python -m py_compile:*)",
       "Bash(python:*)",
       "Bash(git checkout:*)",
-      "Bash(\"C:\\\\Users\\\\24988\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\":*)"
+      "Bash(\"C:\\\\Users\\\\24988\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\":*)",
+      "Bash(\"D:\\\\onedrive\\\\桌面\\\\Project\\\\build.bat\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path ''D:\\\\onedrive\\\\桌面\\\\Project\\\\dist'' -Recurse -Force | Remove-Item -Force -ErrorAction SilentlyContinue\")",
+      "Bash(powershell -Command \"Remove-Item -Path ''D:\\\\onedrive\\\\桌面\\\\Project\\\\dist'' -Recurse -Force -ErrorAction SilentlyContinue\")",
+      "Bash(powershell:*)"
     ]
   }
 }

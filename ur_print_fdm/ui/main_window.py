@@ -33,18 +33,17 @@ from ur_print_fdm.ui.widgets.editor import DockableEditorWidget  # 新增dockabl
 from ur_print_fdm.ui.theme import apply_app_theme  # 向后兼容
 from ur_print_fdm.ui.theme_manager import get_theme_manager  # 新的主题管理器
 from ur_print_fdm.ui.controllers.queue_controller import QueueController
+from ur_print_fdm.ui.controllers.run_controller import RunController
 from ur_print_fdm.ui.controllers.tools_controller import ToolsController
 from ur_print_fdm.ui.services.log_service import LogService
 from ur_print_fdm.ui.workers.threads import (
     ScriptSendThread,
     URScriptEstimateThread,
     SFTPUploadThread,
-    StopThread,
     ConnectionThread,
     MonitorThread,
     ControlReconnectThread,
 )
-from ur_print_fdm.ui.workers.direct_mode_processor import DirectModeProcessor
 from ur_print_fdm.estimators.simple_gcode import SimpleGCodeTimeEstimator
 from ur_print_fdm.plugins.registry import registry
 from ur_print_fdm.ui.resources.icon_manager import IconManager
@@ -106,6 +105,7 @@ class URPrintIDE(QMainWindow):
         # 初始化队列对话框为None
         self.queue_dialog = None
         self.queue_controller = QueueController(self)
+        self.run_controller = RunController(self)
         self.tools_controller = None
         self._log_service = None
 
@@ -844,6 +844,9 @@ class URPrintIDE(QMainWindow):
                 """
             )
 
+    def set_play_pause_state(self, state: str) -> None:
+        self._set_play_pause_state(state)
+
     def _sync_play_pause_button_state(self) -> None:
         """Sync play/pause button based on the active ProductionProcessor state."""
         active = self._get_active_production_processor()
@@ -1152,6 +1155,9 @@ class URPrintIDE(QMainWindow):
 
     def _on_production_error(self, error_msg: str, trace_id: str) -> None:
         StyledMessageBox.critical(self, "生产错误", f"{error_msg}\n\nTrace ID: {trace_id}")
+
+    def on_production_error(self, error_msg: str, trace_id: str) -> None:
+        self._on_production_error(error_msg, trace_id)
 
     def pause_production_dialog(self, is_paused: bool) -> None:
         """队列生产：暂停/继续（优先走 ProductionProcessor 的请求接口）。"""
@@ -1619,6 +1625,9 @@ class URPrintIDE(QMainWindow):
         """将运行/暂停合并按钮恢复到默认“运行”状态。"""
         self._set_play_pause_state("run")
 
+    def reset_global_pause_button(self) -> None:
+        self._reset_global_pause_button()
+
     def _refresh_global_run_enabled(self) -> None:
         """根据连接状态与当前任务刷新运行按钮可用性。"""
         active = self._get_active_production_processor()
@@ -1666,6 +1675,9 @@ class URPrintIDE(QMainWindow):
         t.finished.connect(_cleanup)
         t.start()
 
+    def start_urscript_estimate_on_run(self, script_content: str, *, trace_id: str | None = None) -> None:
+        self._start_urscript_estimate_on_run(script_content, trace_id=trace_id)
+
     def _on_urscript_estimate_result(self, run_id: int, ok: bool, estimate: object, msg: str) -> None:
         if run_id != getattr(self, "_urscript_estimate_active_run_id", None):
             return
@@ -1704,130 +1716,22 @@ class URPrintIDE(QMainWindow):
             pass
         self._urscript_estimate_active_run_id = None
 
+    def reset_urscript_estimate_run(self) -> None:
+        self._reset_urscript_estimate_run()
+
     def _save_current_script_for_run(self) -> str | None:
-        """
-        生产模式必须基于文件（SFTP 上传）。此函数确保当前编辑器内容已保存到真实文件，并返回路径。
-        不弹出“是否加入队列”的提示，避免打断运行流程。
-        """
-        current_editor = self.get_current_editor()
-        if current_editor is None or self.dockable_editor is None:
-            return None
-
-        script_content = current_editor.toPlainText()
-        if not script_content.strip():
-            StyledMessageBox.information(self, "空脚本", "编辑器内容为空，无法运行。")
-            return None
-
-        current_tab_index = self.dockable_editor.tabs.currentIndex()
-        file_path = ""
-        try:
-            maybe_path = self.dockable_editor.tab_paths.get(current_tab_index, "")
-            if maybe_path and os.path.isabs(str(maybe_path)):
-                file_path = str(maybe_path)
-        except Exception:
-            file_path = ""
-
-        default_save_path = ""
-        if not file_path and hasattr(self, "project_widget") and getattr(self.project_widget, "current_project_path", ""):
-            default_save_path = os.path.join(self.project_widget.current_project_path, "新脚本.script")
-
-        if not file_path:
-            file_path, _ = QFileDialog.getSaveFileName(
-                self,
-                "保存脚本以运行（生产模式）",
-                default_save_path,
-                "URScript Files (*.script);;Text Files (*.txt);;All Files (*)",
-            )
-
-        if not file_path:
-            return None
-
-        try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(script_content)
-
-            # 更新 tab 标题与路径映射
-            file_name = os.path.basename(file_path)
-            try:
-                self.dockable_editor.tabs.setTabText(current_tab_index, file_name)
-                self.dockable_editor.tab_paths[current_tab_index] = file_path
-            except Exception:
-                pass
-
-            # 更新 editor 映射（移除旧的临时路径）
-            try:
-                old_paths_to_remove = []
-                for path, editor in self.dockable_editor.editors.items():
-                    if editor == current_editor and path != file_path:
-                        old_paths_to_remove.append(path)
-                for old_path in old_paths_to_remove:
-                    if old_path in self.dockable_editor.editors:
-                        del self.dockable_editor.editors[old_path]
-                self.dockable_editor.editors[file_path] = current_editor
-            except Exception:
-                pass
-
-            return file_path
-        except Exception as e:
-            self.log(f"保存失败: {e}", "ERROR")
-            StyledMessageBox.critical(self, "错误", f"保存文件失败：\n{e}")
-            return None
+        """Compatibility wrapper for RunController."""
+        return self.run_controller._save_current_script_for_run()
 
     def _start_single_run_production(self, script_path: str) -> None:
-        """单文件生产运行：SFTP 双份上传 + Dashboard load loader.urp + play/pause/stop（CB3 友好）。"""
-        if not os.path.isfile(script_path):
-            StyledMessageBox.warning(self, "文件不存在", f"脚本文件不存在：\n{script_path}")
-            return
-
-        if self._get_active_production_processor() is not None:
-            StyledMessageBox.information(self, "正在运行", "已有生产任务在运行中，请先停止/等待完成。")
-            return
-
-        ip = str(self.ip_combo.currentText() or "").strip()
-        if not is_valid_ip(ip):
-            StyledMessageBox.warning(self, "IP 无效", f"不是有效的 IP 地址：{ip}")
-            return
-
-        from ur_print_fdm.shared.logging_context import new_trace_id, trace_context
-
-        trace_id = new_trace_id()
-        self._single_run_trace_id = trace_id
-        with trace_context(trace_id):
-            self.log(f"[运行] 单文件生产运行：{os.path.basename(script_path)}", "INFO")
-
-        script_text = ""
-        try:
-            with open(script_path, "r", encoding="utf-8") as f:
-                script_text = f.read()
-        except Exception:
-            script_text = ""
-        self._start_urscript_estimate_on_run(script_text, trace_id=trace_id)
-
-        watchdog_enabled = self.chk_watchdog.isChecked() if self.chk_watchdog else True
-        proc = ProductionProcessor(
-            ip,
-            SCRIPT_PORT,
-            [script_path],
-            do_index=DEFAULT_DO_INDEX,
-            watchdog_enable=watchdog_enabled,
-            trace_id=trace_id,
-        )
-        self._single_run_processor = proc
-
-        # UI：锁定模式选择，显示上传进度；运行按钮进入“暂停”状态（允许暂停/继续）
-        try:
-            self.run_mode_combo.setEnabled(False)
-        except Exception:
-            pass
-        self._set_play_pause_state("pause")
-
-        proc.file_progress_signal.connect(self._on_single_run_file_progress)
-        proc.error_signal.connect(lambda e: self._on_production_error(e, trace_id))
-        proc.finished_signal.connect(self._on_single_run_finished)
-        proc.start()
+        """Compatibility wrapper for RunController."""
+        self.run_controller._start_single_run_production(script_path)
 
     def _on_single_run_file_progress(self, value: int) -> None:
         return
+
+    def on_single_run_file_progress(self, value: int) -> None:
+        self._on_single_run_file_progress(value)
 
     def _on_single_run_finished(self) -> None:
         # 收尾：隐藏上传进度，释放引用，恢复按钮
@@ -1849,141 +1753,14 @@ class URPrintIDE(QMainWindow):
                 self.log("单文件生产任务结束。", "INFO")
         self._single_run_trace_id = None
 
+    def on_single_run_finished(self) -> None:
+        self._on_single_run_finished()
+
     def run_current_script(self):
-        # 获取当前活动的编辑器
-        current_editor = self.get_current_editor()
-        if current_editor is None:
-            return
-
-        # 如果已有生产任务在运行，避免叠加执行
-        if self._get_active_production_processor() is not None:
-            StyledMessageBox.information(self, "正在运行", "已有生产任务在运行中，请先停止/等待完成。")
-            return
-
-        if not self.driver.is_connected():
-            StyledMessageBox.warning(self, "连接错误", "请先连接机器人（右上角 IP -> 连接）！")
-            return
-
-        # 选择运行模式；只读模式下自动回退到生产模式（CB3 友好）
-        selected_mode = "production"
-        try:
-            selected_mode = str(self.run_mode_combo.currentData() or "production")
-        except Exception:
-            selected_mode = "production"
-
-        if self.driver.is_read_only():
-            selected_mode = "production"
-            try:
-                idx = self.run_mode_combo.findData("production")
-                if idx >= 0:
-                    self.run_mode_combo.setCurrentIndex(idx)
-            except Exception:
-                pass
-
-        if selected_mode == "production":
-            script_path = self._save_current_script_for_run()
-            if not script_path:
-                return
-            self._start_single_run_production(script_path)
-            return
-
-        # 直连模式：使用 30002 端口直接发送脚本（不依赖 RTDE Control）
-        script_content = current_editor.toPlainText()
-        if not script_content.strip():
-            StyledMessageBox.information(self, "空脚本", "编辑器内容为空，无法运行。")
-            return
-
-        if self._direct_mode_processor is not None and self._direct_mode_processor.isRunning():
-            self.log("直连模式正在运行中，请稍候...")
-            return
-
-        from ur_print_fdm.shared.logging_context import new_trace_id, trace_context
-
-        trace_id = new_trace_id()
-        with trace_context(trace_id):
-            self.log("[运行] 正在发送当前脚本... (直连模式 - 30002端口)")
-
-        self._start_urscript_estimate_on_run(script_content, trace_id=trace_id)
-
-        self.btn_play_pause.setEnabled(False)
-
-        # 使用 DirectModeProcessor 通过 30002 端口发送
-        ip = self.driver.get_ip_address()
-        self._direct_mode_processor = DirectModeProcessor(ip, script_content, trace_id=trace_id)
-        self._direct_mode_processor.set_action_run(script_content)
-        self._direct_mode_processor.log_signal.connect(lambda msg: self.log(msg))
-        self._direct_mode_processor.script_sent_signal.connect(self._on_direct_mode_script_sent)
-        self._direct_mode_processor.finished_signal.connect(self._on_direct_mode_finished)
-        self._direct_mode_processor.error_signal.connect(lambda msg: self.log(msg, "ERROR"))
-        self._direct_mode_processor.start()
+        self.run_controller.run_current_script()
     
     def stop_current_script(self):
-        """停止当前任务：优先停止生产任务，直连模式使用 30002 端口停止。"""
-        from ur_print_fdm.shared.logging_context import new_trace_id, trace_context
-
-        trace_id = new_trace_id()
-
-        # 1. 检查生产模式处理器
-        active = self._get_active_production_processor()
-        if active is not None and active.isRunning():
-            reply = StyledMessageBox.question(
-                self,
-                "停止生产",
-                "确认停止当前生产任务？\n将发送 Dashboard stop，并尝试关闭挤出输出。",
-            )
-            if reply == StyledMessageBox.Yes:
-                try:
-                    if hasattr(active, "emergency_stop_action"):
-                        active.emergency_stop_action()
-                    else:
-                        active.stop()
-                    self._reset_global_pause_button()
-                    self._reset_urscript_estimate_run()
-                    with trace_context(trace_id):
-                        self.log("[停止] 已请求停止（生产模式）。", "WARN")
-                except Exception as e:
-                    with trace_context(trace_id):
-                        self.log(f"停止失败: {e}", "ERROR")
-            return
-
-        # 2. 检查当前运行模式
-        selected_mode = "production"
-        try:
-            selected_mode = str(self.run_mode_combo.currentData() or "production")
-        except Exception:
-            selected_mode = "production"
-
-        # 3. 直连模式：使用 30002 端口停止
-        if selected_mode == "direct":
-            self._stop_direct_mode()
-            return
-
-        # 4. 其他情况：使用原有的 StopThread（通过 driver.stop）
-        if not self.driver.is_connected():
-            self.log("未连接，无法发送停止指令。", "WARN")
-            return
-
-        if self.stop_thread is not None and self.stop_thread.isRunning():
-            with trace_context(trace_id):
-                self.log("停止指令正在执行中，请稍候...", "WARN")
-            return
-
-        self.btn_global_stop.setEnabled(False)  # 变灰，防止狂点
-        self.stop_thread = StopThread(self.driver, trace_id=trace_id)
-        self.stop_thread.finished_signal.connect(self.on_stop_finished)
-
-        # 超时处理 - 如果 5 秒内没有完成，强制恢复按钮状态
-        from PyQt6.QtCore import QTimer
-
-        self.stop_timeout_timer = QTimer()
-        self.stop_timeout_timer.setSingleShot(True)
-        self.stop_timeout_timer.timeout.connect(self.on_stop_timeout)
-        self.stop_timeout_timer.start(5000)
-
-        self.stop_thread.finished.connect(self.stop_thread.deleteLater)
-        self.stop_thread.finished.connect(lambda: setattr(self, "stop_thread", None))
-        self.stop_thread.finished.connect(self.stop_timeout_timer.stop)
-        self.stop_thread.start()
+        self.run_controller.stop_current_script()
 
     def on_script_send_result(self, success, message):
         # 恢复按钮状态
@@ -2023,6 +1800,9 @@ class URPrintIDE(QMainWindow):
             self.log(f"[直连模式] {message}", "ERROR")
             self._reset_urscript_estimate_run()
 
+    def on_direct_mode_script_sent(self, success: bool, message: str):
+        self._on_direct_mode_script_sent(success, message)
+
     def _on_direct_mode_finished(self):
         """直连模式处理器完成回调"""
         if self._direct_mode_processor is not None:
@@ -2032,6 +1812,9 @@ class URPrintIDE(QMainWindow):
                 pass
             self._direct_mode_processor = None
         self._refresh_global_run_enabled()
+
+    def on_direct_mode_finished(self):
+        self._on_direct_mode_finished()
 
     def _on_direct_mode_stop_completed(self, success: bool, message: str):
         """直连模式停止完成回调"""
@@ -2044,32 +1827,12 @@ class URPrintIDE(QMainWindow):
         else:
             self.log(f"[直连模式] {message}", "WARN")
 
+    def on_direct_mode_stop_completed(self, success: bool, message: str):
+        self._on_direct_mode_stop_completed(success, message)
+
     def _stop_direct_mode(self):
-        """直连模式停止：通过 30002 端口发送 stopj"""
-        from ur_print_fdm.shared.logging_context import new_trace_id, trace_context
-
-        trace_id = new_trace_id()
-
-        if not self.driver.is_connected():
-            self.log("未连接，无法发送停止指令。", "WARN")
-            return
-
-        with trace_context(trace_id):
-            self.log("[停止] 正在发送停止指令... (直连模式 - 30002端口)")
-
-        self.btn_global_stop.setEnabled(False)
-
-        ip = self.driver.get_ip_address()
-        stop_processor = DirectModeProcessor(ip, trace_id=trace_id)
-        stop_processor.set_action_stop()
-        stop_processor.connect_monitor()  # 连接 RTDE 用于检测停止状态
-        stop_processor.log_signal.connect(lambda msg: self.log(msg))
-        stop_processor.stop_completed_signal.connect(self._on_direct_mode_stop_completed)
-        stop_processor.finished_signal.connect(stop_processor.deleteLater)
-        stop_processor.start()
-
-        # 保存引用以便后续清理
-        self._direct_mode_stop_processor = stop_processor
+        """Compatibility wrapper for RunController."""
+        self.run_controller.stop_direct_mode()
 
     def toggle_monitor(self):
         if not self.driver.is_connected():

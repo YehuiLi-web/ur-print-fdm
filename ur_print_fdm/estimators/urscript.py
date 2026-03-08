@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import math
 from typing import Any, Iterable, Mapping, Sequence
 
-from ur_print_fdm.core.script_sanitizer import sanitize_script_content
+from ur_print_fdm.shared.script_sanitizer import sanitize_script_content
 
 
 @dataclass(frozen=True)

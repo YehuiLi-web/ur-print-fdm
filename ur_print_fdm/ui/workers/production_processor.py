@@ -137,8 +137,10 @@ class ProductionProcessor(QThread):
             self._stop_event.clear()
             self._pause_event.clear()
             self._resume_event.clear()
+            self._log("生产任务开始")
 
             if not self.script_paths:
+                self._log("队列为空：没有可执行的脚本。", level="ERROR")
                 self.error_signal.emit("队列为空：没有可执行的脚本。")
                 self.finished_signal.emit()
                 return
@@ -156,11 +158,13 @@ class ProductionProcessor(QThread):
                     self.progress_signal.emit(idx + 1, total)
 
                     if not os.path.isfile(local_path):
+                        self._log(f"脚本文件不存在：{local_path}", level="ERROR")
                         self.error_signal.emit(f"脚本文件不存在：{local_path}")
                         break
 
                     filename = os.path.basename(local_path)
                     logger.info("Queue item %d/%d: %s", idx + 1, total, filename)
+                    self._log(f"处理队列项 {idx + 1}/{total}: {filename}")
 
                     # 1) Upload (dual: original + remote_loader.script)
                     if not self._sftp_upload_dual(local_path):
@@ -172,6 +176,10 @@ class ProductionProcessor(QThread):
                     # 2) Load loader.urp (full path, URSim style)
                     resp = db.load_program(self.loader_urp_path)
                     if not self._dashboard_ok(resp):
+                        self._log(
+                            f"Dashboard 加载失败：{self.loader_urp_path}，响应：{resp}",
+                            level="ERROR",
+                        )
                         self.error_signal.emit(
                             f"Dashboard 加载失败：{self.loader_urp_path}\n响应：{resp}\n"
                             "请检查：loader.urp 是否存在、路径是否正确、机器人是否有弹窗/保护停机。"
@@ -181,6 +189,7 @@ class ProductionProcessor(QThread):
                     # 3) Play
                     resp = db.play()
                     if not self._dashboard_ok(resp):
+                        self._log(f"Dashboard 运行失败（play）：{resp}", level="ERROR")
                         self.error_signal.emit(
                             f"Dashboard 运行失败（play）：{resp}\n"
                             "请检查：机器人是否处于可运行状态、是否有弹窗/保护停机、是否已正确加载 loader.urp。"
@@ -189,6 +198,7 @@ class ProductionProcessor(QThread):
 
                     # 4) Wait for program start
                     if not self._wait_for_start(db, timeout_s=20.0):
+                        self._log("程序未开始运行（超时）", level="ERROR")
                         self.error_signal.emit("程序未开始运行（超时），请检查机器人模式/保护停机/弹窗。")
                         break
 
@@ -197,16 +207,19 @@ class ProductionProcessor(QThread):
                     if not finished_ok:
                         break
 
+                    self._log(f"队列项完成: {filename}")
                     time.sleep(0.2)
 
             except Exception as e:
                 logger.exception("ProductionProcessor raised: %s", e)
+                self._log(f"生产线程异常: {type(e).__name__}: {e}", level="ERROR")
                 self.error_signal.emit(f"生产线程异常: {type(e).__name__}: {e}")
             finally:
                 try:
                     db.close()
                 except Exception:
                     pass
+                self._log("生产任务结束")
                 self.finished_signal.emit()
 
     # -----------------------------
@@ -267,6 +280,7 @@ class ProductionProcessor(QThread):
             if timeout_s > 0 and time.time() - start_time > timeout_s:
                 logger = logging.getLogger("ur_print_fdm.production")
                 logger.error("程序执行超时（超过 %.1f 小时），强制停止", timeout_s / 3600)
+                self._log(f"程序执行超时（超过 {timeout_s/3600:.1f} 小时），已强制停止", level="ERROR")
                 self.error_signal.emit(f"程序执行超时（超过 {timeout_s/3600:.1f} 小时），已强制停止")
                 self._stop_program_and_kill(db)
                 return False
@@ -325,6 +339,7 @@ class ProductionProcessor(QThread):
         try:
             import paramiko
         except Exception:
+            self._log("缺少依赖 paramiko，无法使用 SFTP 上传。", level="ERROR")
             self.error_signal.emit("缺少依赖 paramiko，无法使用 SFTP 上传。")
             return False
 
@@ -346,6 +361,7 @@ class ProductionProcessor(QThread):
                 self.file_progress_signal.emit(max(0, min(100, pct)))
 
             logger.info("SFTP upload: %s -> %s", filename, self.remote_dir)
+            self._log(f"SFTP 上传: {filename} -> {self.remote_dir}")
             sftp.put(local_path, remote_original, callback=_cb)
             self.file_progress_signal.emit(0)
             sftp.put(local_path, remote_loader, callback=_cb)
@@ -354,9 +370,11 @@ class ProductionProcessor(QThread):
             transport.close()
 
             self.file_progress_signal.emit(100)
+            self._log(f"SFTP 上传完成: {filename}")
             return True
         except Exception as e:
             logger.exception("SFTP upload failed: %s", e)
+            self._log(f"SFTP 上传失败: {type(e).__name__}: {e}", level="ERROR")
             self.error_signal.emit(f"SFTP 上传失败: {type(e).__name__}: {e}")
             return False
 
@@ -406,3 +424,14 @@ class ProductionProcessor(QThread):
             self._send_emergency_secondary()
         except Exception:
             pass
+
+    def _log(self, message: str, *, level: str = "INFO") -> None:
+        logger = logging.getLogger("ur_print_fdm.production")
+        level_norm = str(level or "INFO").upper()
+        if level_norm == "ERROR":
+            logger.error(message)
+        elif level_norm == "WARN":
+            logger.warning(message)
+        else:
+            logger.info(message)
+        self.log_signal.emit(message)

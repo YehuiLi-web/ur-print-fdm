@@ -9,8 +9,8 @@ import re
 
 from ur_print_fdm.constants import DASHBOARD_PORT, SCRIPT_PORT
 from ur_print_fdm.config import config_manager
-from ur_print_fdm.core.script_sanitizer import sanitize_script_content
 from ur_print_fdm.shared.net import is_valid_ip
+from ur_print_fdm.shared.script_sanitizer import sanitize_script_content
 
 # === 引入官方库 ===
 # 我们尝试多种导入方式，以兼容不同的环境配置

@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-import re
+import warnings
 
-_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
+from ur_print_fdm.shared.script_sanitizer import sanitize_script_content
 
+warnings.warn(
+    "ur_print_fdm.core.script_sanitizer is deprecated; use ur_print_fdm.shared.script_sanitizer instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-def sanitize_script_content(script_content: str) -> str:
-    """
-    Normalize URScript text before sending.
-
-    Note: this is **not** a security sandbox. It does not attempt to validate or
-    restrict URScript capabilities. It only removes problematic control
-    characters (e.g. NUL) and normalizes line endings to avoid transport/issues.
-    """
-
-    text = script_content.replace("\r\n", "\n").replace("\r", "\n")
-    return _CONTROL_CHARS_RE.sub("", text)
+__all__ = ["sanitize_script_content"]

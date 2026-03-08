@@ -31,6 +31,10 @@ DEFAULTS: dict = {
         "watchdog_timeout": 120.0,
         "watchdog_speed_threshold": 0.002,
     },
+    "production": {
+        # Maximum runtime in seconds. 0 means no timeout.
+        "max_program_timeout": 0,
+    },
     "project": {
         "last_project_path": "",
         "confirm_deletion": True,

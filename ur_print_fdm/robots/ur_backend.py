@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ur_print_fdm.core.driver import URDriver
-from ur_print_fdm.robots.contracts import RobotBackend, RobotStatus
+from ur_print_fdm.robots.contracts import RobotBackend, RobotStatus, ScriptSendResult
 
 
 class URDriverBackend:
@@ -38,8 +38,12 @@ class URDriverBackend:
             read_only=self.is_read_only(),
         )
 
-    def send_script(self, script: str) -> bool:
-        return bool(self._driver.send_script(script))
+    def send_script(self, script: str) -> ScriptSendResult:
+        result = self._driver.send_script(script)
+        if isinstance(result, tuple):
+            success, warning = result
+            return bool(success), (str(warning) if warning is not None else None)
+        return bool(result), None
 
     def stop(self) -> bool | None:
         return self._driver.stop()

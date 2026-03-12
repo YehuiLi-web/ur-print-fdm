@@ -1,11 +1,12 @@
+from ur_print_fdm.config.robot_targets import robot_target_defaults
+
+
 DEFAULTS: dict = {
     "robot": {
-        "ip_addresses": ["192.168.137.120", "192.168.137.100", "192.168.1.106"],
+        "ip_addresses": ["192.168.1.106"],
         "default_ip": "192.168.1.106",
-        "auto_reconnect": True,
         "backend_id": "ur_rtde_cb3",
         "dashboard": {
-            # URSim default. Real CB3 controllers often use `/programs/loader.urp`.
             "loader_urp_path": "/home/ur/ursim-current/programs/loader.urp",
             "remote_loader_name": "remote_loader.script",
         },
@@ -15,6 +16,7 @@ DEFAULTS: dict = {
             "password": "easybot",
             "remote_dir": "/home/ur/ursim-current/programs",
         },
+        "targets": robot_target_defaults(),
     },
     "printing": {
         "extruder_io_pin": 0,
@@ -50,6 +52,10 @@ DEFAULTS: dict = {
         "run_mode": "production",
         "auto_scroll_log": True,
         "log_max_lines": 2000,
+        "status_dock": {
+            "collapsed": False,
+            "expanded_width": 236,
+        },
         "panels": {
             "joint_panel_collapsed": False,
             "tcp_panel_collapsed": False,

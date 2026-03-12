@@ -15,12 +15,10 @@ import logging
 import socket
 import threading
 import time
-from typing import Callable
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from ur_print_fdm.config import config_manager
-from ur_print_fdm.constants import SCRIPT_PORT, DEFAULT_MODBUS_EXTRUDER
+from ur_print_fdm.constants import SCRIPT_PORT
 from ur_print_fdm.shared.logging_context import trace_context
 from ur_print_fdm.shared.net import is_valid_ip
 
@@ -79,13 +77,6 @@ class DirectModeProcessor(QThread):
         # RTDE Receive for status monitoring (optional)
         self._rr: RTDEReceiveInterface | None = None
         self._rr_lock = threading.Lock()
-
-        # Safety params for stop
-        self.modbus_extruder = str(
-            config_manager.get("printing.modbus_extruder", DEFAULT_MODBUS_EXTRUDER)
-            or DEFAULT_MODBUS_EXTRUDER
-        )
-        self.extruder_do_pin = int(config_manager.get("printing.extruder_io_pin", 0) or 0)
 
     # -----------------------------
     # Public API
@@ -237,15 +228,11 @@ class DirectModeProcessor(QThread):
             return False
 
     def _build_stop_script(self) -> str:
-        """Build stop script with stopj and IO kill."""
+        """Build a normal direct-mode stop script without altering extrusion."""
         lines = [
             "def direct_stop():",
             "  stopj(2.0)",
         ]
-        # Kill extrusion
-        if self.modbus_extruder:
-            lines.append(f'  modbus_set_output_register("{self.modbus_extruder}", 0)')
-        lines.append(f"  set_standard_digital_out({self.extruder_do_pin}, False)")
         lines.append("end")
         lines.append("direct_stop()")
         return "\n".join(lines)

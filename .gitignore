@@ -45,9 +45,17 @@ Thumbs.db
 
 # Logs
 *.log
+iscc.out
+iscc.err
 
 # Temporary files
 *.tmp
 
 # Worktrees
 .worktrees/
+
+# Local assistant configs
+.claude/
+
+# Installer outputs
+installer_output/

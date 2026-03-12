@@ -15,8 +15,8 @@ import math
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QFrame, QToolButton, QProgressBar, QGridLayout,
                              QListWidget, QListWidgetItem, QAbstractItemView,
-                             QMenu, QApplication)
-from PyQt6.QtCore import Qt, pyqtSignal
+                             QMenu, QApplication, QSizePolicy)
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from PyQt6.QtGui import QAction
 from ur_print_fdm.config import config_manager
 from ur_print_fdm.ui import theme
@@ -81,6 +81,10 @@ def get_list_widget_style(t):
             width: 0px;
             background: transparent;
         }}
+        QScrollBar:horizontal {{
+            height: 0px;
+            background: transparent;
+        }}
     """
 
 def get_content_frame_style(t):
@@ -104,6 +108,26 @@ def get_context_menu_style(t):
         }}
     """
 
+def get_restore_handle_style(t):
+    """获取折叠后恢复把手样式"""
+    return f"""
+        QToolButton#StatusDockRestoreHandle {{
+            background-color: {t["bg_secondary"]};
+            border: 1px solid {t["border_light"]};
+            border-right: none;
+            border-top-left-radius: 8px;
+            border-bottom-left-radius: 8px;
+            color: {t["text_muted"]};
+        }}
+        QToolButton#StatusDockRestoreHandle:hover {{
+            background-color: {t["bg_hover"]};
+            color: {t["text"]};
+        }}
+        QToolButton#StatusDockRestoreHandle:pressed {{
+            background-color: {t["bg_hover_strong"]};
+        }}
+    """
+
 def get_progress_bar_style(t, chunk_color=None):
     """获取进度条样式"""
     color = chunk_color or t["accent_blue"]
@@ -120,6 +144,27 @@ def get_joint_bar_style(t, chunk_color):
     """
 
 
+class StatusDockRestoreHandle(QToolButton):
+    """状态监视 dock 折叠后的右侧恢复把手。"""
+
+    restore_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("StatusDockRestoreHandle")
+        self.setFixedSize(18, 96)
+        self.setArrowType(Qt.ArrowType.LeftArrow)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("展开状态监视")
+        self.clicked.connect(lambda: self.restore_requested.emit())
+        self.apply_theme()
+
+    def apply_theme(self):
+        """应用主题样式。"""
+        t = theme.current_tokens()
+        self.setStyleSheet(get_restore_handle_style(t))
+
+
 # =============================================================================
 # CollapsibleBox - 可折叠面板组件
 # =============================================================================
@@ -134,6 +179,8 @@ class CollapsibleBox(QFrame):
         self._is_collapsed = False
 
         self.setFrameStyle(QFrame.Shape.NoFrame)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -163,6 +210,8 @@ class CollapsibleBox(QFrame):
 
         # --- Content Area ---
         self.content_area = QWidget()
+        self.content_area.setMinimumWidth(0)
+        self.content_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.content_layout = QVBoxLayout(self.content_area)
         self.content_layout.setContentsMargins(4, 4, 4, 6)
         self.content_layout.setSpacing(4)
@@ -252,6 +301,8 @@ class ReorderablePanel(QListWidget):
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setSpacing(0)
 
         self._panel_widgets = []
@@ -268,10 +319,23 @@ class ReorderablePanel(QListWidget):
         # 确保 viewport 背景色也正确设置
         self.viewport().setStyleSheet(f"background-color: {t['bg_secondary']};")
 
+    def _item_size_hint(self, widget):
+        hint = widget.sizeHint()
+        viewport_width = max(0, self.viewport().width())
+        return QSize(viewport_width, hint.height())
+
+    def _refresh_item_size_hints(self):
+        for item, widget in zip(self._items, self._panel_widgets):
+            if item and widget:
+                item.setSizeHint(self._item_size_hint(widget))
+        self.doItemsLayout()
+
     def add_section(self, widget):
         """添加面板"""
+        widget.setMinimumWidth(0)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         item = QListWidgetItem(self)
-        item.setSizeHint(widget.sizeHint())
+        item.setSizeHint(self._item_size_hint(widget))
         self.addItem(item)
         self.setItemWidget(item, widget)
         self._panel_widgets.append(widget)
@@ -290,15 +354,20 @@ class ReorderablePanel(QListWidget):
                 item = self._items[index]
                 widget = self._panel_widgets[index]
                 if item and widget:
-                    item.setSizeHint(widget.sizeHint())
+                    item.setSizeHint(self._item_size_hint(widget))
         except Exception:
             pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_item_size_hints()
 
     def set_section_visible(self, widget, visible):
         """设置面板可见性"""
         item = self._widget_to_item.get(widget)
         if item:
             item.setHidden(not visible)
+            self._refresh_item_size_hints()
 
     def get_panel_order(self):
         """获取面板顺序"""
@@ -320,6 +389,8 @@ class PrintStatsContent(QWidget):
     """打印统计内容组件"""
     def __init__(self):
         super().__init__()
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(6)
@@ -391,6 +462,8 @@ class TemperatureContent(QWidget):
     """温度监控内容组件"""
     def __init__(self):
         super().__init__()
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(6)
@@ -449,6 +522,8 @@ class PrintParamsContent(QWidget):
     """打印参数内容组件"""
     def __init__(self):
         super().__init__()
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
@@ -515,6 +590,8 @@ class MotionContent(QWidget):
     """运动状态内容组件"""
     def __init__(self):
         super().__init__()
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(6)
@@ -553,6 +630,8 @@ class JointsContent(QWidget):
     """关节角度内容组件"""
     def __init__(self):
         super().__init__()
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(2)
@@ -627,12 +706,14 @@ class TCPPoseContent(QWidget):
     """TCP位姿内容组件"""
     def __init__(self):
         super().__init__()
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
 
-        # 存储当前TCP值 (转换后的值: mm和度)
-        self._current_values = [0.0] * 6
+        # 存储当前TCP位姿原始值 (m 和 rad)，便于直接导出为 UR pose 字符串
+        self._current_pose = [0.0] * 6
 
         # 启用右键菜单
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -641,7 +722,7 @@ class TCPPoseContent(QWidget):
         self.labels = []
         self.name_labels = []
         self.unit_labels = []
-        names = [("X", "mm"), ("Y", "mm"), ("Z", "mm"), ("Rx", "°"), ("Ry", "°"), ("Rz", "°")]
+        names = [("X", "mm"), ("Y", "mm"), ("Z", "mm"), ("Rx", "rad"), ("Ry", "rad"), ("Rz", "rad")]
 
         for name, unit in names:
             row = QHBoxLayout()
@@ -651,7 +732,7 @@ class TCPPoseContent(QWidget):
             lbl.setFixedWidth(25)
             self.name_labels.append(lbl)
 
-            val = QLabel("0.00")
+            val = QLabel("0.00" if unit == "mm" else "0.000")
             val.setAlignment(Qt.AlignmentFlag.AlignRight)
 
             unit_lbl = QLabel(unit)
@@ -692,12 +773,9 @@ class TCPPoseContent(QWidget):
 
     def _copy_all_coordinates(self):
         """复制全部坐标到剪贴板"""
-        text = (f"X: {self._current_values[0]:.2f} mm, "
-                f"Y: {self._current_values[1]:.2f} mm, "
-                f"Z: {self._current_values[2]:.2f} mm, "
-                f"Rx: {self._current_values[3]:.2f} deg, "
-                f"Ry: {self._current_values[4]:.2f} deg, "
-                f"Rz: {self._current_values[5]:.2f} deg")
+        text = (f"p[{self._current_pose[0]:.6f}, {self._current_pose[1]:.6f}, "
+                f"{self._current_pose[2]:.6f}, {self._current_pose[3]:.6f}, "
+                f"{self._current_pose[4]:.6f}, {self._current_pose[5]:.6f}]")
         QApplication.clipboard().setText(text)
 
     def update_data(self, tcp):
@@ -705,20 +783,20 @@ class TCPPoseContent(QWidget):
         if not tcp:
             return
         for i, val in enumerate(tcp[:6]):
+            self._current_pose[i] = val
             if i < 3:  # 位置 m -> mm
                 converted = val * 1000
                 self.labels[i].setText(f"{converted:.2f}")
-                self._current_values[i] = converted
-            else:  # 角度 rad -> deg
-                converted = val * 57.2958
-                self.labels[i].setText(f"{converted:.2f}")
-                self._current_values[i] = converted
+            else:  # 角度保持 rad 显示
+                self.labels[i].setText(f"{val:.3f}")
 
 
 class TCPOffsetContent(QWidget):
     """TCP偏移内容组件"""
     def __init__(self):
         super().__init__()
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
@@ -780,6 +858,7 @@ class TCPOffsetContent(QWidget):
 class StatusWidget(QWidget):
     """状态监控组件 - 工业简洁风格，支持拖拽排序"""
     panels_reordered = pyqtSignal(list)
+    COMPACT_MINIMUM_WIDTH = 208
 
     # 面板定义: (state_key, 显示名称, 默认是否显示)
     PANEL_DEFS = [
@@ -788,14 +867,14 @@ class StatusWidget(QWidget):
         ("print_params", "打印参数", True),
         ("motion", "运动状态", True),
         ("joints", "关节角度", True),
-        ("tcp_pose", "TCP 位姿", True),
+        ("tcp_pose", "TCP 位姿(Base)", True),
         ("tcp_offset", "TCP 偏移", True),
     ]
 
     def __init__(self):
         super().__init__()
         self.setObjectName("StatusWidget")  # 设置对象名称用于样式选择器
-        self.setMinimumWidth(260)
+        self.setMinimumWidth(self.COMPACT_MINIMUM_WIDTH)
 
         # 打印计时器
         self._elapsed_seconds = 0
@@ -876,7 +955,7 @@ class StatusWidget(QWidget):
 
         # 6. TCP位姿
         self.tcp_pose = TCPPoseContent()
-        self.sec_tcp = CollapsibleBox("TCP 位姿", state_key="tcp_pose")
+        self.sec_tcp = CollapsibleBox("TCP 位姿(Base)", state_key="tcp_pose")
         self.sec_tcp.add_widget(self.tcp_pose)
         self.panel.add_section(self.sec_tcp)
         self._sections["tcp_pose"] = self.sec_tcp
@@ -1012,13 +1091,29 @@ class StatusWidget(QWidget):
 
     def set_connection_status(self, is_connected, config_name=""):
         """设置连接状态 (兼容main_window接口)"""
-        # 当前UI没有专门的连接状态显示，可以在未来添加
-        pass
+        summary = str(config_name or ("已连接" if is_connected else "未连接"))
+        self.setToolTip(f"连接状态: {summary}")
 
     def set_motion_status(self, action="", motion_type=""):
         """设置运动状态 (兼容main_window接口)"""
         # 当前UI没有专门的运动状态文字显示，可以在未来添加
         pass
+
+    def clear_live_data(self):
+        """清空实时监控数据，避免断线后保留陈旧值。"""
+        self.motion.update_data(0.0)
+
+        for val in self.joints.vals:
+            val.setText("--")
+        for bar in self.joints.bars:
+            bar.setValue(360)
+
+        for i, val in enumerate(self.tcp_pose.labels):
+            val.setText("--")
+            self.tcp_pose._current_pose[i] = 0.0
+
+        for val in self.tcp_offset.labels:
+            val.setText("--")
 
     def apply_theme(self):
         """应用主题样式"""

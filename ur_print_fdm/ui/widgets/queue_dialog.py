@@ -110,8 +110,10 @@ class QueueDialog(QDialog):
 
     def queue_add(self):
         """添加队列项目"""
-        if self.parent() and hasattr(self.parent(), 'queue_add'):
-            # 如果父窗口有相应的函数，调用它
+        controller = getattr(self.parent(), "queue_controller", None) if self.parent() else None
+        if controller and hasattr(controller, "queue_add"):
+            controller.queue_add(self.queue_list)
+        elif self.parent() and hasattr(self.parent(), 'queue_add_to_dialog'):
             self.parent().queue_add_to_dialog(self.queue_list)
         else:
             # 否则使用本地实现
@@ -124,7 +126,10 @@ class QueueDialog(QDialog):
 
     def queue_remove(self):
         """删除选中的队列项目"""
-        if self.parent() and hasattr(self.parent(), 'queue_remove_from_dialog'):
+        controller = getattr(self.parent(), "queue_controller", None) if self.parent() else None
+        if controller and hasattr(controller, "queue_remove"):
+            controller.queue_remove(self.queue_list)
+        elif self.parent() and hasattr(self.parent(), 'queue_remove_from_dialog'):
             self.parent().queue_remove_from_dialog(self.queue_list)
         else:
             # 否则使用本地实现
@@ -133,7 +138,10 @@ class QueueDialog(QDialog):
 
     def save_selected_script(self):
         """保存当前编辑器内容到选中的队列项"""
-        if self.parent() and hasattr(self.parent(), 'save_selected_script_dialog'):
+        controller = getattr(self.parent(), "queue_controller", None) if self.parent() else None
+        if controller and hasattr(controller, "save_selected_script"):
+            controller.save_selected_script(self.queue_list)
+        elif self.parent() and hasattr(self.parent(), 'save_selected_script_dialog'):
             self.parent().save_selected_script_dialog(self.queue_list)
         else:
             # 这个功能需要与父窗口通信来获取当前编辑器内容
@@ -141,21 +149,32 @@ class QueueDialog(QDialog):
 
     def start_production(self):
         """开始生产（需要与主窗口通信）"""
-        if self.parent() and hasattr(self.parent(), 'start_production_dialog'):
+        controller = getattr(self.parent(), "queue_controller", None) if self.parent() else None
+        if controller and hasattr(controller, "start_production"):
+            controller.start_production(self.queue_list, self.chk_watchdog.isChecked(), self.prog_batch)
+        elif self.parent() and hasattr(self.parent(), 'start_production_dialog'):
             self.parent().start_production_dialog(self.queue_list, self.chk_watchdog.isChecked(), self.prog_batch)
         else:
             StyledMessageBox.information(self, "提示", "开始生产功能需要与主窗口协调。")
 
     def stop_production(self):
         """停止生产"""
-        if self.parent() and hasattr(self.parent(), 'stop_production_dialog'):
+        controller = getattr(self.parent(), "queue_controller", None) if self.parent() else None
+        if controller and hasattr(controller, "stop_production"):
+            controller.stop_production()
+        elif self.parent() and hasattr(self.parent(), 'stop_production_dialog'):
             self.parent().stop_production_dialog()
         else:
             StyledMessageBox.information(self, "提示", "停止生产功能需要与主窗口协调。")
 
     def pause_production(self):
         """暂停/继续生产（Dashboard pause/play）"""
-        if self.parent() and hasattr(self.parent(), "pause_production_dialog"):
+        controller = getattr(self.parent(), "queue_controller", None) if self.parent() else None
+        if controller and hasattr(controller, "pause_production"):
+            is_paused = bool(self.btn_pause_batch.isChecked())
+            controller.pause_production(is_paused)
+            self.btn_pause_batch.setText("继续" if is_paused else "暂停")
+        elif self.parent() and hasattr(self.parent(), "pause_production_dialog"):
             is_paused = bool(self.btn_pause_batch.isChecked())
             self.parent().pause_production_dialog(is_paused)
             self.btn_pause_batch.setText("继续" if is_paused else "暂停")

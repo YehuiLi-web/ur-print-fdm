@@ -6,6 +6,16 @@ QSS样式表生成器
 from typing import Dict, Any
 
 
+def _rgba(color: str, alpha: float) -> str:
+    color = str(color or "").strip()
+    if color.startswith("#") and len(color) == 7:
+        r = int(color[1:3], 16)
+        g = int(color[3:5], 16)
+        b = int(color[5:7], 16)
+        return f"rgba({r}, {g}, {b}, {alpha:.3f})"
+    return color
+
+
 def generate_qss(t: Dict[str, Any]) -> str:
     """
     基于设计令牌生成主题 QSS
@@ -16,6 +26,10 @@ def generate_qss(t: Dict[str, Any]) -> str:
     Returns:
         完整的QSS样式表字符串
     """
+    popup_surface_bg = _rgba(t.get("bg_panel", "#2d2d2d"), 0.14)
+    popup_alt_bg = _rgba(t.get("bg_secondary", "#1e1e1e"), 0.11)
+    popup_hover_bg = "rgba(255, 255, 255, 0.020)"
+    popup_selected_bg = "rgba(255, 255, 255, 0.055)"
     return f"""
         /* === 全局基础 === */
         QMainWindow, QWidget {{
@@ -82,6 +96,135 @@ def generate_qss(t: Dict[str, Any]) -> str:
             width: 20px;
             border-left: none;
             background: transparent;
+        }}
+        QFrame[ui_role="fused_combo"] {{
+            border: 1px solid {t["border"]};
+            border-radius: {t["radius_lg"]};
+            min-height: 30px;
+        }}
+        QFrame[ui_role="fused_combo"][ui_variant="form_combo"],
+        QFrame[ui_role="fused_combo"][ui_variant="toolbar_combo"] {{
+            background-color: {t["bg_secondary"]};
+        }}
+        QFrame[ui_role="fused_combo"][ui_variant="mode_selector"] {{
+            background-color: {t["bg_panel"]};
+        }}
+        QFrame[ui_role="fused_combo"]:hover {{
+            border-color: {t["border_light"]};
+        }}
+        QFrame[ui_role="fused_combo"][ui_variant="form_combo"]:hover,
+        QFrame[ui_role="fused_combo"][ui_variant="toolbar_combo"][focused="true"],
+        QFrame[ui_role="fused_combo"][ui_variant="toolbar_combo"]:hover,
+        QFrame[ui_role="fused_combo"][ui_variant="form_combo"][focused="true"] {{
+            background-color: {t["bg_panel"]};
+        }}
+        QFrame[ui_role="fused_combo"][ui_variant="mode_selector"]:hover,
+        QFrame[ui_role="fused_combo"][ui_variant="mode_selector"][focused="true"] {{
+            background-color: {t["bg_panel"]};
+        }}
+        QFrame[ui_role="fused_combo"][focused="true"] {{
+            border: 1px solid {t["border_light"]};
+        }}
+        QFrame[ui_role="fused_combo"][expanded="true"] {{
+            border-color: {t["border_light"]};
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+        }}
+        QFrame[ui_role="fused_combo"]:disabled {{
+            background-color: {t["bg_secondary"]};
+            border-color: {t["border"]};
+        }}
+        QFrame[ui_role="fused_combo"] QLabel[ui_role="fused_combo_label"] {{
+            background: transparent;
+            color: {t["text"]};
+            padding: 0 8px 0 10px;
+        }}
+        QFrame[ui_role="fused_combo"][ui_variant="mode_selector"] QLabel[ui_role="fused_combo_label"] {{
+            font-weight: 500;
+        }}
+        QFrame[ui_role="fused_combo"] QLineEdit[ui_role="fused_combo_edit"] {{
+            background: transparent;
+            border: none;
+            color: {t["text"]};
+            padding: 0 8px 0 10px;
+            margin: 0;
+            min-height: 0;
+            selection-background-color: {t["selection_bg"]};
+        }}
+        QFrame[ui_role="fused_combo"] QLineEdit[ui_role="fused_combo_edit"]:focus,
+        QFrame[ui_role="fused_combo"] QLineEdit[ui_role="fused_combo_edit"]:hover {{
+            background: transparent;
+            border: none;
+        }}
+        QFrame[ui_role="fused_combo"]:disabled QLabel[ui_role="fused_combo_label"],
+        QFrame[ui_role="fused_combo"]:disabled QLineEdit[ui_role="fused_combo_edit"] {{
+            color: {t["text_dim"]};
+        }}
+        QFrame[ui_role="fused_combo_arrow_host"] {{
+            background: transparent;
+            border: none;
+            border-left: 1px solid rgba(255, 255, 255, 0.06);
+        }}
+        QFrame[ui_role="fused_combo"][expanded="true"] QFrame[ui_role="fused_combo_arrow_host"] {{
+            border-left: 1px solid rgba(255, 255, 255, 0.08);
+        }}
+        QLabel[ui_role="fused_combo_arrow"] {{
+            background: transparent;
+            padding: 0;
+        }}
+        QComboBox[ui_variant="mode_selector"] {{
+            background-color: {t["bg_panel"]};
+            border: 1px solid {t["border"]};
+            border-radius: {t["radius_lg"]};
+            padding: 0 0 0 10px;
+            min-height: 30px;
+            font-weight: 500;
+        }}
+        QComboBox[ui_variant="mode_selector"]:hover {{
+            background-color: {t["bg_tertiary"]};
+            border-color: {t["border_light"]};
+        }}
+        QComboBox[ui_variant="mode_selector"]:on {{
+            border: 1px solid {t["border_light"]};
+            background-color: {t["bg_panel"]};
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+        }}
+        QComboBox[ui_variant="mode_selector"]:focus {{
+            border: 1px solid {t["border_light"]};
+            background-color: {t["bg_panel"]};
+        }}
+        QComboBox[ui_variant="mode_selector"]::drop-down {{
+            subcontrol-origin: border;
+            subcontrol-position: top right;
+            width: 22px;
+            margin: 0;
+            border: none;
+            border-left: 1px solid rgba(255, 255, 255, 0.06);
+            border-top-right-radius: {t["radius_lg"]};
+            border-bottom-right-radius: {t["radius_lg"]};
+            background: {t["bg_panel"]};
+        }}
+        QComboBox[ui_variant="mode_selector"]::drop-down:hover,
+        QComboBox[ui_variant="mode_selector"]:on::drop-down {{
+            background-color: {t["bg_panel"]};
+            border-left: 1px solid rgba(255, 255, 255, 0.08);
+        }}
+        QComboBox[ui_variant="mode_selector"]:on::drop-down {{
+            border-bottom-right-radius: 0px;
+        }}
+        QComboBox[ui_variant="mode_selector"]::down-arrow {{
+            image: url({t["tree_branch_open_icon"]});
+            width: 10px;
+            height: 10px;
+        }}
+        QComboBox[ui_variant="mode_selector"] QLineEdit {{
+            background: transparent;
+            border: none;
+            padding: 0;
+            margin: 0;
+            min-height: 0;
+            selection-background-color: transparent;
         }}
 
         /* 工具栏 CheckBox - 透明背景 */
@@ -241,6 +384,86 @@ def generate_qss(t: Dict[str, Any]) -> str:
         QComboBox QAbstractItemView::item:selected {{
             background-color: {t["accent"]};
             color: {t["text_on_accent"]};
+        }}
+        QComboBox[ui_variant="mode_selector"] QAbstractItemView {{
+            background-color: {t["bg_panel"]};
+            border: 1px solid {t["border_light"]};
+            border-top: none;
+            border-top-left-radius: 0px;
+            border-top-right-radius: 0px;
+            border-bottom-left-radius: {t["radius_lg"]};
+            border-bottom-right-radius: {t["radius_lg"]};
+            color: {t["text"]};
+            selection-background-color: transparent;
+            selection-color: {t["text"]};
+            outline: none;
+            padding: 4px 0;
+        }}
+        QComboBox[ui_variant="mode_selector"] QAbstractItemView::item {{
+            padding: 6px 10px;
+            margin: 0;
+            min-height: 24px;
+            border: none;
+            border-radius: 0px;
+        }}
+        QComboBox[ui_variant="mode_selector"] QAbstractItemView::item:hover:!selected {{
+            background-color: {t["bg_hover"]};
+        }}
+        QComboBox[ui_variant="mode_selector"] QAbstractItemView::item:selected {{
+            background-color: {t["bg_tertiary"]};
+            color: {t["text"]};
+            border: none;
+        }}
+        QWidget[ui_role="fused_combo_popup"] {{
+            background: transparent;
+            border: none;
+        }}
+        QFrame[ui_role="fused_combo_popup_surface"] {{
+            background-color: {popup_surface_bg};
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-top: none;
+            border-top-left-radius: 0px;
+            border-top-right-radius: 0px;
+            border-bottom-left-radius: {t["radius_lg"]};
+            border-bottom-right-radius: {t["radius_lg"]};
+        }}
+        QFrame[ui_role="fused_combo_popup_surface"][ui_variant="form_combo"],
+        QFrame[ui_role="fused_combo_popup_surface"][ui_variant="toolbar_combo"] {{
+            background-color: {popup_alt_bg};
+        }}
+        QFrame[ui_role="fused_combo_popup_surface"][ui_variant="mode_selector"] {{
+            background-color: {popup_surface_bg};
+        }}
+        QScrollArea[ui_role="fused_combo_popup_scroll"],
+        QWidget[ui_role="fused_combo_popup_content"] {{
+            background: transparent;
+            border: none;
+        }}
+        QFrame[ui_role="fused_combo_popup_item"] {{
+            background: transparent;
+            border: none;
+            border-radius: 0px;
+        }}
+        QFrame[ui_role="fused_combo_popup_item"][highlighted="true"] {{
+            background-color: {popup_hover_bg};
+        }}
+        QFrame[ui_role="fused_combo_popup_item"][selected="true"] {{
+            background-color: {popup_selected_bg};
+        }}
+        QFrame[ui_role="fused_combo_popup_item"][selected="true"][highlighted="true"] {{
+            background-color: {popup_selected_bg};
+        }}
+        QFrame[ui_role="fused_combo_popup_item"][last="true"] {{
+            border-bottom-left-radius: {t["radius_lg"]};
+            border-bottom-right-radius: {t["radius_lg"]};
+        }}
+        QLabel[ui_role="fused_combo_popup_item_label"] {{
+            background: transparent;
+            color: {t["text"]};
+            padding: 0 8px 0 10px;
+        }}
+        QFrame[ui_role="fused_combo_popup_surface"][ui_variant="mode_selector"] QLabel[ui_role="fused_combo_popup_item_label"] {{
+            font-weight: 500;
         }}
 
         /* === 按钮 (通用) - Phase B 优化: 增强圆角与交互动效 === */
@@ -431,7 +654,7 @@ def generate_qss(t: Dict[str, Any]) -> str:
         QTextEdit#log_console {{
             border: none;
             font-size: {t["size_small"]};
-            padding: 4px 6px;
+            padding: 4px 0 4px 6px;
         }}
 
         /* === QDialogButtonBox === */

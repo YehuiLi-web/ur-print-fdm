@@ -5,7 +5,7 @@ import platform
 import subprocess
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QMenu, QApplication, QFileDialog, QLabel, QFrame)
 from ur_print_fdm.ui.widgets.styled_message_box import StyledMessageBox
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QAction, QColor
 from ur_print_fdm.ui.resources.icon_manager import IconManager
 from ur_print_fdm.ui.theme_manager import get_theme_manager
@@ -14,6 +14,12 @@ from ur_print_fdm.paths import editor_session_path
 
 # 常量配置
 MAX_TAB_NAME_LENGTH = 25  # 标签页名称最大显示长度
+SAVE_FILE_FILTER = "URScript Files (*.script);;Text Files (*.txt);;All Files (*)"
+UNSAVED_PATH_PREFIX = "__unsaved_"
+WELCOME_TAB_PATH = "__welcome__"
+TAB_PATH_PROPERTY = "_editor_tab_path"
+TAB_MODIFIED_PROPERTY = "_editor_tab_modified"
+MODIFIED_TAB_PREFIX = "● "
 
 from .core import CodeEditor
 
@@ -296,6 +302,7 @@ class DockableEditorWidget(QWidget):
     # 信号
     content_changed = pyqtSignal(int)
     file_saved = pyqtSignal(str)  # 文件保存成功信号
+    upload_requested = pyqtSignal(list)  # 请求上传指定标签对应的文件
 
     def __init__(self):
         super().__init__()
@@ -326,9 +333,9 @@ class DockableEditorWidget(QWidget):
             # 收集当前打开的文件
             open_files = []
             for idx in range(self.tabs.count()):
-                path = self.tab_paths.get(idx, "")
+                path = self._tab_path(idx)
                 # 只保存真实文件路径，不保存未命名文件
-                if path and not path.startswith("__unsaved_") and os.path.exists(path):
+                if path and not self._is_unsaved_path(path) and os.path.exists(path):
                     open_files.append(path)
 
             # 更新最近文件列表
@@ -368,6 +375,7 @@ class DockableEditorWidget(QWidget):
 
         self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
+        self.tabs.tabBar().tabMoved.connect(self._on_tab_moved)
         self.tabs.tabCloseRequested.connect(self.close_tab)
 
         # 样式定义 - VSCode 风格标签栏（隐藏滚动按钮，保留滚轮切换）
@@ -530,6 +538,9 @@ class DockableEditorWidget(QWidget):
             editor.cursorPositionChanged.connect(self._update_status_bar_cursor)
             # 立即更新一次
             self._update_status_bar_cursor()
+        elif self._status_bar:
+            self._status_bar.update_cursor(0, 0)
+            self._status_bar.update_selection(0, 0)
 
     def _update_status_bar_cursor(self):
         """更新状态栏光标信息"""
@@ -547,23 +558,175 @@ class DockableEditorWidget(QWidget):
 
     def _truncate_tab_name(self, name, max_length=MAX_TAB_NAME_LENGTH):
         """
-        截断过长的标签页名称
-        规则：去掉扩展名，在中间截断显示，后半部分保留更多
-        例如：VT350_v2_planar_part01_flag.script -> VT350_v2...part01_flag
+        截断过长的标签页名称，同时尽量保留扩展名。
         """
-        # 去掉扩展名
-        base, _ = os.path.splitext(name)
+        if len(name) <= max_length:
+            return name
 
-        if len(base) <= max_length:
-            return base
+        base, ext = os.path.splitext(name)
+        ellipsis = "…"
+        available = max_length - len(ext) - len(ellipsis)
+        if available <= 1:
+            available = max(1, max_length - len(ellipsis))
+            return name[:available] + ellipsis
 
-        # 中间截断：后半部分保留更多（通常文件名后缀更重要）
-        ellipsis = "…"  # 使用单字符省略号
-        available = max_length - len(ellipsis)
-        front_len = available // 3  # 前1/3
-        back_len = available - front_len  # 后2/3
+        front_len = max(1, available // 3)
+        back_len = max(1, available - front_len)
+        return base[:front_len] + ellipsis + base[-back_len:] + ext
 
-        return base[:front_len] + ellipsis + base[-back_len:]
+    def _tab_widget(self, index):
+        if 0 <= index < self.tabs.count():
+            return self.tabs.widget(index)
+        return None
+
+    def _editor_from_widget(self, widget):
+        if widget is None:
+            return None
+        layout = widget.layout()
+        if layout is None or layout.count() == 0:
+            return None
+        editor = layout.itemAt(0).widget()
+        if isinstance(editor, CodeEditor):
+            return editor
+        return None
+
+    def _editor_for_index(self, index):
+        return self._editor_from_widget(self._tab_widget(index))
+
+    def _find_tab_index_for_editor(self, editor):
+        if editor is None:
+            return -1
+        for index in range(self.tabs.count()):
+            if self._editor_for_index(index) is editor:
+                return index
+        return -1
+
+    @staticmethod
+    def _editor_text(editor):
+        if editor is None:
+            return ""
+        getter = getattr(editor, "text", None)
+        if callable(getter):
+            return getter()
+        getter = getattr(editor, "toPlainText", None)
+        if callable(getter):
+            return getter()
+        return ""
+
+    @staticmethod
+    def _set_editor_text(editor, text):
+        if editor is None:
+            return
+        setter = getattr(editor, "setText", None)
+        if callable(setter):
+            setter(text)
+            return
+        setter = getattr(editor, "setPlainText", None)
+        if callable(setter):
+            setter(text)
+
+    @staticmethod
+    def _is_unsaved_path(path):
+        return bool(path) and str(path).startswith(UNSAVED_PATH_PREFIX)
+
+    @staticmethod
+    def _is_welcome_path(path):
+        return path == WELCOME_TAB_PATH
+
+    def _tab_path(self, index):
+        widget = self._tab_widget(index)
+        if widget is None:
+            return ""
+        path = widget.property(TAB_PATH_PROPERTY)
+        return str(path) if path else ""
+
+    def _tab_is_modified(self, index):
+        widget = self._tab_widget(index)
+        if widget is None:
+            return False
+        return bool(widget.property(TAB_MODIFIED_PROPERTY))
+
+    def _set_tab_metadata(self, index, *, path=None, modified=None):
+        widget = self._tab_widget(index)
+        if widget is None:
+            return
+        if path is not None:
+            widget.setProperty(TAB_PATH_PROPERTY, path)
+        if modified is not None:
+            widget.setProperty(TAB_MODIFIED_PROPERTY, bool(modified))
+        self._sync_tab_state()
+
+    def _sync_tab_state(self):
+        new_tab_paths = {}
+        new_tab_modified = {}
+        for index in range(self.tabs.count()):
+            path = self._tab_path(index)
+            if path:
+                new_tab_paths[index] = path
+            new_tab_modified[index] = self._tab_is_modified(index)
+        self.tab_paths = new_tab_paths
+        self.tab_modified = new_tab_modified
+
+    def _on_tab_moved(self, _from_index, _to_index):
+        self._sync_tab_state()
+
+    def _tab_base_title(self, index):
+        path = self._tab_path(index)
+        if self._is_welcome_path(path):
+            return "欢迎"
+        if self._is_unsaved_path(path) or not path:
+            return "未命名"
+        return self._truncate_tab_name(os.path.basename(path))
+
+    def _tab_tooltip(self, path):
+        if not path or self._is_unsaved_path(path) or self._is_welcome_path(path):
+            return ""
+        return path
+
+    def _apply_tab_visual_state(self, index, *, flash_saved=False):
+        if not (0 <= index < self.tabs.count()):
+            return
+        title = self._tab_base_title(index)
+        if self._tab_is_modified(index) and not self._is_welcome_path(self._tab_path(index)):
+            title = MODIFIED_TAB_PREFIX + title
+        self.tabs.setTabText(index, title)
+        self.tabs.tabBar().setTabToolTip(index, self._tab_tooltip(self._tab_path(index)))
+
+        if self._tab_is_modified(index):
+            self.tabs.tabBar().setTabTextColor(index, QColor("#E74C3C"))
+            return
+
+        if flash_saved:
+            widget = self._tab_widget(index)
+            self.tabs.tabBar().setTabTextColor(index, QColor("#66BB6A"))
+            QTimer.singleShot(
+                800,
+                lambda tab_widget=widget: self._apply_tab_visual_state(self.tabs.indexOf(tab_widget))
+                if tab_widget is not None and self.tabs.indexOf(tab_widget) != -1
+                else None,
+            )
+            return
+
+        self.tabs.tabBar().setTabTextColor(index, QColor("#d4d4d4"))
+
+    def _mark_editor_modified(self, editor):
+        index = self._find_tab_index_for_editor(editor)
+        if index == -1 or self._tab_is_modified(index):
+            return
+        self._set_tab_metadata(index, modified=True)
+        self._apply_tab_visual_state(index)
+
+    def _connect_editor_signals(self, editor):
+        editor.textChanged.connect(lambda editor=editor: self._mark_editor_modified(editor))
+        if hasattr(editor, 'cursorPositionChanged'):
+            editor.cursorPositionChanged.connect(self._update_status_bar_cursor)
+
+    def _is_empty_untitled_tab(self, index):
+        editor = self._editor_for_index(index)
+        if editor is None:
+            return False
+        path = self._tab_path(index)
+        return self._is_unsaved_path(path) and not self._tab_is_modified(index) and not self._editor_text(editor).strip()
 
     def _show_welcome_tab(self, recent_files=None):
         """显示欢迎页标签"""
@@ -571,9 +734,9 @@ class DockableEditorWidget(QWidget):
         self._welcome_widget.file_requested.connect(self._on_welcome_file_requested)
 
         idx = self.tabs.addTab(self._welcome_widget, "欢迎")
+        self._set_tab_metadata(idx, path=WELCOME_TAB_PATH, modified=False)
+        self._apply_tab_visual_state(idx)
         self.tabs.setCurrentIndex(idx)
-        # 欢迎页不可关闭（在只有欢迎页时）
-        self.tab_paths[idx] = "__welcome__"
 
     def _on_welcome_file_requested(self, file_path):
         """从欢迎页请求打开文件"""
@@ -604,21 +767,18 @@ class DockableEditorWidget(QWidget):
 
     def get_current_editor(self):
         """获取当前活动的编辑器内核"""
-        current_widget = self.tabs.currentWidget()
-        if current_widget:
-            # 这里的 current_widget 是 editor_wrapper
-            return current_widget.layout().itemAt(0).widget()
-        return None
+        return self._editor_from_widget(self.tabs.currentWidget())
 
     def current_text(self):
         """获取当前编辑器文本"""
         editor = self.get_current_editor()
-        return editor.toPlainText() if editor else ""
+        return self._editor_text(editor)
 
     def set_current_text(self, text):
         """设置当前编辑器文本"""
         editor = self.get_current_editor()
-        if editor: editor.setPlainText(text)
+        if editor:
+            self._set_editor_text(editor, text)
 
     # === 标签页逻辑 ===
 
@@ -630,18 +790,18 @@ class DockableEditorWidget(QWidget):
         editor_wrapper = self._wrap_editor(new_editor)
 
         # 生成临时路径
-        temp_path = os.path.normpath(f"__unsaved_{uuid.uuid4()}__.script")
+        temp_path = os.path.normpath(f"{UNSAVED_PATH_PREFIX}{uuid.uuid4()}__.script")
 
         # 添加标签
-        tab_index = self.tabs.addTab(editor_wrapper, "未命名*")
-        self.tabs.tabBar().setTabToolTip(tab_index, temp_path)
+        tab_index = self.tabs.addTab(editor_wrapper, "未命名")
 
         # 注册映射
         self.editors[temp_path] = new_editor
-        self.tab_paths[tab_index] = temp_path
+        self._set_tab_metadata(tab_index, path=temp_path, modified=False)
+        self._apply_tab_visual_state(tab_index)
 
         # 绑定修改信号
-        new_editor.textChanged.connect(lambda idx=tab_index: self.mark_tab_modified(idx))
+        self._connect_editor_signals(new_editor)
 
         self.tabs.setCurrentIndex(tab_index)
         return new_editor, tab_index
@@ -662,14 +822,10 @@ class DockableEditorWidget(QWidget):
 
             # 2. 检查当前是否可以复用标签（欢迎页或空白未命名页）
             current_idx = self.tabs.currentIndex()
-            current_editor = self.get_current_editor()
-            tab_text = self.tabs.tabText(current_idx)
 
             # 逻辑：如果是欢迎页，或者是一个空的未命名文件，则直接顶替
-            is_welcome = self.tab_paths.get(current_idx) == "__welcome__"
-            is_empty_untitled = (tab_text == "未命名"
-                                and current_editor
-                                and not current_editor.toPlainText().strip())
+            is_welcome = self._tab_path(current_idx) == WELCOME_TAB_PATH
+            is_empty_untitled = self._is_empty_untitled_tab(current_idx)
 
             if is_welcome:
                 # 修复逻辑：先添加新标签，再关闭欢迎页
@@ -689,15 +845,11 @@ class DockableEditorWidget(QWidget):
 
     def close_tab(self, index):
         """关闭标签页"""
-        title = self.tabs.tabText(index)
-        path = self.tab_paths.get(index, "")
+        path = self._tab_path(index)
 
-        # 检查是否有未保存更改（支持新的圆点标记）
-        if title.startswith('● ') or title.endswith('*'):
-            # 清理标签名用于显示
-            display_title = title.lstrip('● ').rstrip('*').strip()
-            if not display_title:
-                display_title = "未命名"
+        # 检查是否有未保存更改
+        if self._tab_is_modified(index):
+            display_title = self._tab_base_title(index)
             reply = StyledMessageBox.question_yes_no_cancel(
                 self, "未保存", 
                 f"标签「{display_title}」有未保存更改，是否保存？"
@@ -710,10 +862,8 @@ class DockableEditorWidget(QWidget):
                     return  # 保存失败或取消，不关闭标签
 
         # 清理映射
-        if index in self.tab_paths:
-            if path in self.editors:
-                del self.editors[path]
-            del self.tab_paths[index]
+        if path in self.editors:
+            del self.editors[path]
 
         self.tabs.removeTab(index)
 
@@ -724,80 +874,61 @@ class DockableEditorWidget(QWidget):
             # 修复逻辑：不再创建空白标签，而是返回欢迎页
             self._show_welcome_tab(self._session_data.get("recent_files", []))
 
-    def _save_tab(self, index):
-        """保存指定标签页的内容，返回是否成功"""
-        path = self.tab_paths.get(index, "")
-        widget = self.tabs.widget(index)
-        if not widget:
-            return False
+    def save_tab(self, index, *, prompt_title="保存脚本", default_save_path="", dialog_parent=None):
+        """保存指定标签页，返回保存后的文件路径。"""
+        path = self._tab_path(index)
+        editor = self._editor_for_index(index)
+        if editor is None or self._is_welcome_path(path):
+            return None
 
-        editor = widget.layout().itemAt(0).widget()
-        content = editor.toPlainText()
-
-        # 如果是未保存的新文件，弹出另存为对话框
-        if path.startswith("__unsaved_") or not path:
+        if self._is_unsaved_path(path) or not path:
             save_path, _ = QFileDialog.getSaveFileName(
-                self, "保存脚本", "",
-                "URScript Files (*.script);;Text Files (*.txt);;All Files (*)"
+                dialog_parent or self,
+                prompt_title,
+                default_save_path,
+                SAVE_FILE_FILTER,
             )
             if not save_path:
-                return False  # 用户取消
-            path = save_path
+                return None
+            path = os.path.normpath(save_path)
 
         try:
             with open(path, 'w', encoding='utf-8') as f:
-                f.write(content)
+                f.write(self._editor_text(editor))
 
-            # 更新标签页状态
-            old_path = self.tab_paths.get(index)
-            if old_path and old_path in self.editors:
+            old_path = self._tab_path(index)
+            if old_path and old_path != path and old_path in self.editors:
                 del self.editors[old_path]
 
-            self.tab_paths[index] = path
             self.editors[path] = editor
-            
-            # 使用截断的文件名，清除修改标记
-            display_name = self._truncate_tab_name(os.path.basename(path))
-            self.tabs.setTabText(index, display_name)
-            self.tabs.tabBar().setTabToolTip(index, path)
-            self.tabs.tabBar().setTabTextColor(index, QColor("#d4d4d4"))  # 恢复正常颜色
-            self.tab_modified[index] = False
-            
-            # 短暂显示保存成功反馈（绿色闪烁）
-            self.tabs.tabBar().setTabTextColor(index, QColor("#66BB6A"))
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(800, lambda: self.tabs.tabBar().setTabTextColor(index, QColor("#d4d4d4")))
-
+            self._set_tab_metadata(index, path=path, modified=False)
+            self._apply_tab_visual_state(index, flash_saved=True)
             self.file_saved.emit(path)
-            return True
+            return path
         except Exception as e:
-            StyledMessageBox.critical(self, "保存失败", f"无法保存文件：{str(e)}")
-            return False
+            StyledMessageBox.critical(dialog_parent or self, "保存失败", f"无法保存文件：{str(e)}")
+            return None
+
+    def save_current_tab(self, *, prompt_title="保存脚本", default_save_path="", dialog_parent=None):
+        """保存当前标签页。"""
+        return self.save_tab(
+            self.tabs.currentIndex(),
+            prompt_title=prompt_title,
+            default_save_path=default_save_path,
+            dialog_parent=dialog_parent,
+        )
+
+    def _save_tab(self, index):
+        """保存指定标签页的内容，返回是否成功"""
+        return self.save_tab(index) is not None
 
     def _rebuild_tab_paths(self):
         """重建 tab_paths 索引映射（关闭标签后调用）"""
-        new_tab_paths = {}
-        for i in range(self.tabs.count()):
-            tooltip = self.tabs.tabBar().tabToolTip(i)
-            if tooltip:
-                new_tab_paths[i] = tooltip
-        self.tab_paths = new_tab_paths
+        self._sync_tab_state()
 
     def mark_tab_modified(self, index):
         """标记已修改 - 使用圆点指示器"""
-        if index >= self.tabs.count(): return
-        text = self.tabs.tabText(index)
-        if not text.startswith("● "):
-            if text in ["未命名", "脚本编辑器"]:
-                new_text = "● 未命名"
-            else:
-                # 移除可能的旧 * 标记
-                clean_text = text.rstrip("*").strip()
-                new_text = "● " + clean_text
-            self.tabs.setTabText(index, new_text)
-            self.tab_modified[index] = True
-            # 修改时标签变红色
-            self.tabs.tabBar().setTabTextColor(index, QColor("#E74C3C"))
+        self._mark_editor_modified(self._editor_for_index(index))
 
     # === 内部辅助 ===
 
@@ -816,60 +947,82 @@ class DockableEditorWidget(QWidget):
     def _create_initial_tab(self):
         editor = self._create_editor_instance()
         wrapper = self._wrap_editor(editor)
-        temp_path = os.path.normpath(f"__unsaved_{uuid.uuid4()}__.script")
+        temp_path = os.path.normpath(f"{UNSAVED_PATH_PREFIX}{uuid.uuid4()}__.script")
 
         idx = self.tabs.addTab(wrapper, "未命名")
-        self.tabs.tabBar().setTabToolTip(idx, temp_path)
         self.editors[temp_path] = editor
-        self.tab_paths[idx] = temp_path
+        self._set_tab_metadata(idx, path=temp_path, modified=False)
+        self._apply_tab_visual_state(idx)
 
         # 修复：使用默认参数捕获 idx 值，避免闭包引用问题
-        editor.textChanged.connect(lambda checked=False, tab_idx=idx: self.mark_tab_modified(tab_idx))
+        self._connect_editor_signals(editor)
 
     def _update_tab_to_file(self, index, path, content):
         """将当前空标签更新为文件状态"""
-        editor = self.get_current_editor()
-        editor.setPlainText(content)
+        editor = self._editor_for_index(index)
+        self._set_editor_text(editor, content)
 
-        old_path = self.tab_paths.get(index)
-        if old_path in self.editors: del self.editors[old_path]
+        old_path = self._tab_path(index)
+        if old_path in self.editors:
+            del self.editors[old_path]
 
-        # 使用截断的文件名
-        display_name = self._truncate_tab_name(os.path.basename(path))
-        self.tabs.setTabText(index, display_name)
-        self.tabs.tabBar().setTabToolTip(index, path)
-
-        self.tab_paths[index] = path
         self.editors[path] = editor
-        self.tab_modified[index] = False
+        self._set_tab_metadata(index, path=path, modified=False)
+        self._apply_tab_visual_state(index)
 
     def _add_file_tab(self, path, content):
         """添加新文件标签"""
         editor = self._create_editor_instance()
-        editor.setPlainText(content)
+        self._set_editor_text(editor, content)
         wrapper = self._wrap_editor(editor)
 
-        # 使用截断的文件名
-        display_name = self._truncate_tab_name(os.path.basename(path))
-        idx = self.tabs.addTab(wrapper, display_name)
-        self.tabs.tabBar().setTabToolTip(idx, path)
+        idx = self.tabs.addTab(wrapper, self._truncate_tab_name(os.path.basename(path)))
         self.tabs.setCurrentIndex(idx)
 
         self.editors[path] = editor
-        self.tab_paths[idx] = path
-        self.tab_modified[idx] = False
+        self._set_tab_metadata(idx, path=path, modified=False)
+        self._apply_tab_visual_state(idx)
 
-        editor.textChanged.connect(lambda idx=idx: self.mark_tab_modified(idx))
-        # 连接光标变化信号
-        if hasattr(editor, 'cursorPositionChanged'):
-            editor.cursorPositionChanged.connect(self._update_status_bar_cursor)
+        self._connect_editor_signals(editor)
 
     def show_tab_context_menu(self, pos):
         idx = self.tabs.tabBar().tabAt(pos)
-        if idx == -1: return
+        if idx == -1:
+            return
 
-        menu = QMenu()
-        path = self.tab_paths.get(idx)
+        menu = self._build_tab_context_menu(idx)
+        menu.exec(self.tabs.tabBar().mapToGlobal(pos))
+
+    def _tab_context_menu_style(self):
+        t = get_theme_manager().current_tokens()
+        return f"""
+            QMenu {{
+                background-color: {t["bg_tertiary"]};
+                border: 1px solid {t["border_light"]};
+                border-radius: {t.get("radius", "6px")};
+                color: {t["text"]};
+                padding: 6px 0;
+            }}
+            QMenu::item {{
+                padding: 8px 18px 8px 16px;
+                margin: 2px 8px;
+                border-radius: {t.get("radius", "6px")};
+            }}
+            QMenu::item:selected {{
+                background-color: {t["accent"]};
+                color: {t["text_on_accent"]};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background-color: {t["border_light"]};
+                margin: 6px 12px;
+            }}
+        """
+
+    def _build_tab_context_menu(self, idx):
+        menu = QMenu(self)
+        menu.setStyleSheet(self._tab_context_menu_style())
+        path = self._tab_path(idx)
 
         # 关闭当前标签
         act_close = QAction("关闭", self)
@@ -889,7 +1042,14 @@ class DockableEditorWidget(QWidget):
         
         menu.addSeparator()
 
-        if path and not path.startswith("__unsaved_") and not path.startswith("__welcome"):
+        upload_path = self._get_uploadable_tab_path(idx)
+        if upload_path:
+            act_upload = QAction("上传到机器人", self)
+            act_upload.triggered.connect(lambda checked=False, tab_idx=idx: self.request_upload_for_tab(tab_idx))
+            menu.addAction(act_upload)
+            menu.addSeparator()
+
+        if path and not self._is_unsaved_path(path) and not self._is_welcome_path(path):
             act_open = QAction("在资源管理器中打开", self)
             act_open.triggered.connect(lambda: self._open_explorer(path))
             menu.addAction(act_open)
@@ -898,7 +1058,21 @@ class DockableEditorWidget(QWidget):
             act_copy.triggered.connect(lambda: QApplication.clipboard().setText(path))
             menu.addAction(act_copy)
 
-        menu.exec(self.tabs.mapToGlobal(pos))
+        return menu
+
+    def _get_uploadable_tab_path(self, index):
+        path = self._tab_path(index)
+        if not path or self._is_unsaved_path(path) or self._is_welcome_path(path):
+            return None
+        normalized = os.path.normpath(path)
+        if not os.path.isfile(normalized):
+            return None
+        return normalized
+
+    def request_upload_for_tab(self, index):
+        upload_path = self._get_uploadable_tab_path(index)
+        if upload_path:
+            self.upload_requested.emit([upload_path])
     
     def _close_other_tabs(self, keep_idx):
         """关闭除指定标签外的所有标签"""
@@ -917,12 +1091,9 @@ class DockableEditorWidget(QWidget):
         """清除标签页的修改标记"""
         if index >= self.tabs.count():
             return
-        text = self.tabs.tabText(index)
-        if text.startswith("● "):
-            clean_text = text[2:]  # 移除 "● " 前缀
-            self.tabs.setTabText(index, clean_text)
-            self.tabs.tabBar().setTabTextColor(index, QColor("#d4d4d4"))  # 恢复正常颜色
-            self.tab_modified[index] = False
+        if self._tab_is_modified(index):
+            self._set_tab_metadata(index, modified=False)
+            self._apply_tab_visual_state(index)
 
     def _open_explorer(self, path):
         directory = os.path.dirname(path)

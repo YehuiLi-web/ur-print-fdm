@@ -8,12 +8,12 @@
 
 | 按钮文案 | 位置/用途 | 点击处理函数 | 关键调用链（到驱动/线程） |
 |---|---|---|---|
-| 连接 / 断开 | 工具栏连接按钮 `btn_connect` | `toggle_monitor()` | **连接**：`toggle_monitor` → `ConnectionThread(self.driver)` → `URDriver.connect()` → `on_connect_result` → `MonitorThread(self.driver)` → `URDriver.get_status()`；**断开**：`toggle_monitor` → `MonitorThread.requestInterruption()` → `URDriver.disconnect()` |
+| 连接 / 断开 / 修复连接 | 工具栏连接按钮 `btn_connect` | `toggle_monitor()` | **连接**：`toggle_monitor` → `ConnectionThread(self.driver)` → `URDriver.connect()` → `on_connect_result` → `MonitorThread(self.driver)` → `URDriver.get_status()`；**断开**：`toggle_monitor` → `MonitorThread.requestInterruption()` → `URDriver.disconnect()`；**故障修复**：`toggle_monitor` / `trigger_connection_repair` → `ConnectionRepairThread(self.driver, ip)` → `URDriver.repair_connection(ip)` |
 | 保存 | 工具栏保存按钮 `btn_save` | `save_current_script()` | 仅文件保存（无驱动调用） |
 | 运行 / 暂停 / 继续 | 工具栏运行/暂停按钮 `btn_play_pause` | `_on_play_pause_clicked()` | **有生产任务**：`request_pause/request_resume` → `ProductionProcessor` → `SimpleDashboardDriver.pause()/play()`；**无生产任务**：`run_current_script()` → （生产模式）`ProductionProcessor` → `SimpleDashboardDriver.load_program()/play()`；（直连模式）`ScriptSendThread(self.driver)` → `URDriver.send_script()` |
 | 停止 | 工具栏全局停止按钮 `btn_global_stop` | `stop_current_script()` | **有生产任务**：`ProductionProcessor.emergency_stop_action()` → `SimpleDashboardDriver.send("stop")` + secondary script；**无生产任务**：`StopThread(self.driver)` → `URDriver.stop()` |
 | 上传 | 工具栏上传按钮 `btn_upload` | `upload_files()` | `upload_files` → `_begin_upload` → `SFTPUploadThread.run()` → paramiko SFTP（不经 URDriver） |
-| （无文字）重连 | 工具栏“手动重连”图标按钮 `btn_reconnect` | `trigger_reconnect()` | `ControlReconnectThread(self.driver)` → `URDriver.reconnect_control_interface()` |
+| （无文字）修复连接 | 工具栏“修复连接”图标按钮 `btn_repair_connection` | `trigger_connection_repair()` | `ConnectionRepairThread(self.driver, ip)` → `URDriver.repair_connection(ip)` |
 | 添加 | 队列面板 `btn_queue_add` | `queue_add()` | 仅弹窗选择文件加入列表（无驱动调用） |
 | 删除 | 队列面板 `btn_queue_del` | `queue_remove()` | 仅删除列表项（无驱动调用） |
 | 清空 | 队列面板 `btn_queue_clear` | `queue_list.clear()` | 仅清空列表（无驱动调用） |

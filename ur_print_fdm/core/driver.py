@@ -9,6 +9,11 @@ import re
 
 from ur_print_fdm.constants import DASHBOARD_PORT, SCRIPT_PORT
 from ur_print_fdm.config import config_manager
+from ur_print_fdm.shared.connection_state import (
+    ChannelState,
+    ConnectionSnapshot,
+    SessionPhase,
+)
 from ur_print_fdm.shared.net import is_valid_ip
 from ur_print_fdm.shared.script_sanitizer import sanitize_script_content
 
@@ -38,10 +43,209 @@ class URDriver:
         self.ip_address = ""
         self.read_only = False # 标记是否处于只读模式
         self._lock = threading.RLock()  # 用于线程安全的可重入锁
+        self._session_requested = False
+        self._session_generation = 0
+        self._phase = SessionPhase.OFFLINE
+        self._receive_state = ChannelState.DOWN
+        self._control_state = ChannelState.DOWN
+        self._dashboard_state = ChannelState.DOWN
+        self._last_error = ""
+        self._control_reason = ""
 
         # === CB3 特性配置 ===
         self.FREQUENCY = 125.0  # CB3 控制频率 125Hz
         self.DT = 1.0 / self.FREQUENCY
+
+    def _sync_legacy_flags_locked(self) -> None:
+        self.connected = self._receive_state == ChannelState.UP
+        self.read_only = self.connected and self._control_state != ChannelState.UP
+
+    def _derive_phase_locked(self) -> SessionPhase:
+        if not self._session_requested:
+            return SessionPhase.OFFLINE
+
+        if self._receive_state != ChannelState.UP:
+            return SessionPhase.FAULTED
+
+        if self._control_state == ChannelState.UP and self._dashboard_state == ChannelState.UP:
+            return SessionPhase.ONLINE_FULL
+        if self._dashboard_state == ChannelState.UP:
+            return SessionPhase.ONLINE_DASHBOARD_ONLY
+        if self._control_state == ChannelState.UP:
+            return SessionPhase.ONLINE_CONTROL_ONLY
+        return SessionPhase.ONLINE_MONITOR_ONLY
+
+    def _build_snapshot_locked(self) -> ConnectionSnapshot:
+        return ConnectionSnapshot(
+            phase=self._phase,
+            ip=str(self.ip_address or ""),
+            receive=self._receive_state,
+            control=self._control_state,
+            dashboard=self._dashboard_state,
+            last_error=str(self._last_error or ""),
+            control_reason=str(self._control_reason or ""),
+            generation=int(self._session_generation),
+        )
+
+    def get_connection_snapshot(self) -> ConnectionSnapshot:
+        with self._lock:
+            return self._build_snapshot_locked()
+
+    def _set_phase_locked(self, phase: SessionPhase) -> None:
+        self._phase = phase
+        self._sync_legacy_flags_locked()
+
+    def _set_offline_locked(self, *, keep_ip: bool = True, error: str = "") -> None:
+        if not keep_ip:
+            self.ip_address = ""
+        self.rc = None
+        self.rr = None
+        self.db = None
+        self._session_requested = False
+        self._receive_state = ChannelState.DOWN
+        self._control_state = ChannelState.DOWN
+        self._dashboard_state = ChannelState.DOWN
+        self._control_reason = ""
+        self._last_error = str(error or "")
+        self._phase = SessionPhase.OFFLINE
+        self._sync_legacy_flags_locked()
+
+    def _probe_dashboard_available(self, ip: str, *, timeout: float = 1.0) -> bool:
+        if not ip:
+            return False
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(float(timeout))
+        try:
+            s.connect((ip, DASHBOARD_PORT))
+            try:
+                s.recv(1024)
+            except Exception:
+                pass
+            s.sendall(b"programState\n")
+            response = s.recv(1024).decode("utf-8", errors="replace").strip()
+            low = response.lower()
+            if not response:
+                return False
+            if any(token in low for token in ("error", "failed", "not connected", "unable")):
+                return False
+            return True
+        except Exception:
+            return False
+        finally:
+            try:
+                s.close()
+            except Exception:
+                pass
+
+    def probe_connection_snapshot(self, *, probe_dashboard: bool = False) -> ConnectionSnapshot:
+        with self._lock:
+            ip = str(self.ip_address or "").strip()
+            rr_ref = self.rr
+            rc_ref = self.rc
+            session_requested = bool(self._session_requested)
+            control_state = self._control_state
+            dashboard_state = self._dashboard_state
+            receive_state = self._receive_state
+
+        if session_requested:
+            if rr_ref is None:
+                receive_state = ChannelState.DOWN
+            else:
+                try:
+                    receive_state = ChannelState.UP if rr_ref.isConnected() else ChannelState.DOWN
+                except Exception:
+                    receive_state = ChannelState.DOWN
+
+            if control_state == ChannelState.UP:
+                if rc_ref is None:
+                    control_state = ChannelState.DOWN
+                else:
+                    try:
+                        control_state = ChannelState.UP if rc_ref.isConnected() else ChannelState.DOWN
+                    except Exception:
+                        control_state = ChannelState.DOWN
+
+            if probe_dashboard:
+                dashboard_state = (
+                    ChannelState.UP if self._probe_dashboard_available(ip, timeout=1.0) else ChannelState.DOWN
+                )
+
+        with self._lock:
+            self._receive_state = receive_state
+            self._control_state = control_state
+            self._dashboard_state = dashboard_state
+
+            if receive_state != ChannelState.UP:
+                self._phase = SessionPhase.FAULTED if self._session_requested else SessionPhase.OFFLINE
+            elif self._phase not in {
+                SessionPhase.CONNECTING,
+                SessionPhase.DISCONNECTING,
+                SessionPhase.REPAIRING,
+            }:
+                self._phase = self._derive_phase_locked()
+
+            self._sync_legacy_flags_locked()
+            return self._build_snapshot_locked()
+
+    def mark_control_stale(self, reason: str = "") -> ConnectionSnapshot:
+        with self._lock:
+            if self.rc is not None:
+                try:
+                    self.rc.disconnect()
+                except Exception:
+                    pass
+            self.rc = None
+            self._control_state = ChannelState.STALE if self._session_requested else ChannelState.DOWN
+            self._control_reason = str(reason or "控制通道已失效")
+            if self._phase not in {
+                SessionPhase.CONNECTING,
+                SessionPhase.DISCONNECTING,
+                SessionPhase.REPAIRING,
+            }:
+                self._phase = self._derive_phase_locked()
+            self._sync_legacy_flags_locked()
+            return self._build_snapshot_locked()
+
+    def repair_connection(self, ip: str | None = None, log_callback=None) -> bool:
+        ip = str(ip or self.get_ip_address() or "").strip()
+        if not ip:
+            return False
+
+        self.disconnect()
+        return self.connect(ip, log_callback=log_callback)
+
+    def _build_stop_extrusion_script(self, *, script_name: str = "kill_io") -> str:
+        modbus_name = str(config_manager.get("printing.modbus_extruder", "MODBUS_1") or "").strip()
+        do_pin = int(config_manager.get("printing.extruder_io_pin", 0) or 0)
+        kill_lines = [f"sec {script_name}():\n"]
+        if modbus_name:
+            kill_lines.append(f'  modbus_set_output_register("{modbus_name}", 0)\n')
+        kill_lines.append(f"  set_standard_digital_out({do_pin}, False)\n")
+        kill_lines.append("end\n")
+        return "".join(kill_lines)
+
+    def _send_secondary_script(self, script: str, *, timeout_s: float = 0.5) -> bool:
+        with self._lock:
+            ip = str(self.ip_address or "").strip()
+            rc = self.rc
+
+        if not ip:
+            return False
+
+        try:
+            if rc and rc.isConnected():
+                return bool(rc.sendCustomScript(script))
+
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout_s)
+            s.connect((ip, SCRIPT_PORT))
+            s.sendall(script.encode("utf-8"))
+            s.close()
+            return True
+        except Exception as e:
+            logging.debug(f"_send_secondary_script: 发送脚本时忽略异常: {e}")
+            return False
 
     def connect(self, ip, log_callback=None):
         """
@@ -69,7 +273,15 @@ class URDriver:
 
         # 获取锁以确保线程安全
         with self._lock:
+            self._session_generation += 1
+            self._session_requested = True
             self.ip_address = ip
+            self._last_error = ""
+            self._control_reason = ""
+            self._receive_state = ChannelState.CONNECTING
+            self._dashboard_state = ChannelState.CONNECTING
+            self._control_state = ChannelState.CONNECTING
+            self._set_phase_locked(SessionPhase.CONNECTING)
             log(f"[连接] 开始连接机器人 {ip} ...")
 
             # === 1. 连接数据接收端 (RTDE Receive) ===
@@ -77,13 +289,13 @@ class URDriver:
                 log("[RTDE] 连接数据接口 (RTDE Receive)...")
                 self.rr = RTDEReceiveInterface(self.ip_address)
                 if self.rr.isConnected():
-                    self.connected = True
+                    self._receive_state = ChannelState.UP
                     log("数据接口连接成功！")
                 else:
                     raise ConnectionError("数据接口连接后立即断开")
             except Exception as e:
                 log(f"数据接口连接失败: {e}")
-                self.connected = False
+                self._set_offline_locked(error=str(e))
                 return False
 
             # === 2. 连接仪表盘服务 (Dashboard) ===
@@ -93,6 +305,7 @@ class URDriver:
                 self.db = DashboardClient(self.ip_address)
                 self.db.connect()
                 if self.db.isConnected():
+                    self._dashboard_state = ChannelState.UP
                     log("仪表盘服务连接成功！(支持暂停/继续)")
                 else:
                     raise ConnectionError("仪表盘连接失败")
@@ -100,6 +313,9 @@ class URDriver:
                 log(f"仪表盘连接失败: {e}")
                 log("系统将无法使用【暂停/继续】功能，但仍可监视。")
                 self.db = None
+                self._dashboard_state = ChannelState.DOWN
+                if not self._last_error:
+                    self._last_error = f"Dashboard: {e}"
                 # 注意：Dashboard 失败不阻断主流程，只是功能受限
 
             # === 3. 连接运动控制端 (RTDE Control) ===
@@ -109,7 +325,7 @@ class URDriver:
                 self.rc = RTDEControlInterface(self.ip_address, RTDEControlInterface.FLAG_UPLOAD_SCRIPT)
 
                 if self.rc.isConnected():
-                    self.read_only = False
+                    self._control_state = ChannelState.UP
                     log("运动接口连接成功！(读写模式)")
                 else:
                     raise ConnectionError("运动接口未就绪")
@@ -118,13 +334,19 @@ class URDriver:
                 log("提示：可能是机器人端连接数已满，请重启机器人。")
                 log("已切换为【只读模式】，仅用于监视。")
                 self.rc = None
-                self.read_only = True
+                self._control_state = ChannelState.DOWN
+                self._control_reason = str(e)
 
+            self._last_error = ""
+            self._phase = self._derive_phase_locked()
+            self._sync_legacy_flags_locked()
             return True
 
     def disconnect(self):
         """安全断开所有连接"""
         with self._lock:
+            self._session_generation += 1
+            self._set_phase_locked(SessionPhase.DISCONNECTING)
             if self.rc:
                 try: self.rc.disconnect()
                 except Exception as e: logging.debug(f"断开控制接口时忽略异常: {e}")
@@ -135,11 +357,7 @@ class URDriver:
                 try: self.db.disconnect()
                 except Exception as e: logging.debug(f"断开仪表盘接口时忽略异常: {e}")
 
-            self.rc = None
-            self.rr = None
-            self.db = None
-            self.connected = False
-            self.read_only = False
+            self._set_offline_locked()
 
     # === FDM 打印专用功能 (CB3 优化) ===
 
@@ -188,25 +406,7 @@ class URDriver:
         logging.warning("执行 FDM 紧急停止...")
 
         # 1. 立即切断 IO (防止漏料)
-        modbus_name = str(config_manager.get("printing.modbus_extruder", "MODBUS_1") or "").strip()
-        do_pin = int(config_manager.get("printing.extruder_io_pin", 0) or 0)
-        kill_lines = ["sec kill_io():\n"]
-        if modbus_name:
-            kill_lines.append(f'  modbus_set_output_register("{modbus_name}", 0)\n')
-        kill_lines.append(f"  set_standard_digital_out({do_pin}, False)\n")
-        kill_lines.append("end\n")
-        kill_io_script = "".join(kill_lines)
-        try:
-            if self.rc and self.rc.isConnected():
-                self.rc.sendCustomScript(kill_io_script)
-            else:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(0.5)
-                s.connect((self.ip_address, SCRIPT_PORT))
-                s.sendall(kill_io_script.encode("utf-8"))
-                s.close()
-        except Exception:
-            pass
+        self._send_secondary_script(self._build_stop_extrusion_script())
 
         # 2. 调用标准停止
         self.stop()
@@ -244,6 +444,11 @@ class URDriver:
         try:
             # 现在在锁外检查连接状态
             if not rr_ref.isConnected():
+                with self._lock:
+                    self._receive_state = ChannelState.DOWN
+                    if self._session_requested:
+                        self._phase = SessionPhase.FAULTED
+                    self._sync_legacy_flags_locked()
                 return None, None, None, 0.0
 
             tcp = rr_ref.getActualTCPPose()
@@ -266,6 +471,12 @@ class URDriver:
             return tcp, joints, tcp_offset, speed_mag
         except Exception as e:
             logging.error(f"get_status: 获取机器人状态失败: {e}")
+            with self._lock:
+                self._receive_state = ChannelState.DOWN
+                if self._session_requested:
+                    self._phase = SessionPhase.FAULTED
+                    self._last_error = str(e)
+                self._sync_legacy_flags_locked()
             return None, None, None, 0.0
 
     # === 运动指令发送 ===
@@ -304,9 +515,12 @@ class URDriver:
         try:
             logging.debug(f"发送脚本至控制器: {func_name if func_name else 'Raw Script'}")
             success = rc_ref.sendCustomScript(sanitized_script)
+            if success:
+                self.mark_control_stale("sendCustomScript 执行后控制脚本被替换")
             return success, warning
         except Exception as e:
             logging.error(f"发送脚本异常: {e}")
+            self.mark_control_stale(f"发送脚本异常: {e}")
             return False, None
 
     # === Dashboard 系统控制 (官方库实现) ===
@@ -359,7 +573,13 @@ class URDriver:
                 return False
         return True
 
-    def _dashboard_socket_command(self, command: str, *, timeout: float = 5.0) -> str | None:
+    def _dashboard_socket_command(
+        self,
+        command: str,
+        *,
+        timeout: float = 5.0,
+        suppress_errors: bool = False,
+    ) -> str | None:
         """Send a raw Dashboard (29999) command and return response string.
 
         Notes (CB3/URSim):
@@ -369,7 +589,8 @@ class URDriver:
         with self._lock:
             ip = str(self.ip_address or "").strip()
         if not ip:
-            logging.error("dashboard: No IP address set")
+            if not suppress_errors:
+                logging.error("dashboard: No IP address set")
             return None
 
         cmd = str(command or "").strip()
@@ -387,7 +608,8 @@ class URDriver:
             s.sendall((cmd + "\n").encode("utf-8"))
             return s.recv(4096).decode("utf-8", errors="replace").strip()
         except Exception as e:
-            logging.error("dashboard socket command failed (%s): %s", cmd, e)
+            if not suppress_errors:
+                logging.error("dashboard socket command failed (%s): %s", cmd, e)
             return None
         finally:
             try:
@@ -446,6 +668,7 @@ class URDriver:
             if any(k in low for k in ("error", "failed", "not found", "no such")):
                 logging.error("load_program failed: %s", resp)
                 return False
+            self.mark_control_stale("Dashboard load 接管了当前控制脚本")
             return True
         except Exception as e:
             logging.error(f"load_program failed: {e}")
@@ -489,7 +712,7 @@ class URDriver:
                 return False
 
     def stop(self):
-        """强制停止 (Dashboard stop + 关闭挤出 + stopj)，尽量适配 CB3 只读模式。"""
+        """强制停止机械臂/当前程序 (Dashboard stop + stopj)。"""
         import threading
 
         def stop_with_timeout(func, timeout=2.0):
@@ -538,36 +761,7 @@ class URDriver:
             except Exception as e:
                 logging.error(f"Dashboard 停止失败: {e}")
 
-        # 2. IO kill (cut extrusion) with timeout
-        modbus_name = str(config_manager.get("printing.modbus_extruder", "MODBUS_1") or "").strip()
-        do_pin = int(config_manager.get("printing.extruder_io_pin", 0) or 0)
-        kill_lines = ["sec kill_io():\n"]
-        if modbus_name:
-            kill_lines.append(f'  modbus_set_output_register("{modbus_name}", 0)\n')
-        kill_lines.append(f"  set_standard_digital_out({do_pin}, False)\n")
-        kill_lines.append("end\n")
-        stop_script = "".join(kill_lines)
-
-        try:
-            if rc and rc.isConnected():
-                res = stop_with_timeout(lambda: rc.sendCustomScript(stop_script), timeout=2.0)
-                if res is not False:
-                    any_ok = True
-                    logging.debug("stop: 通过RTDE发送停止脚本")
-                else:
-                    logging.debug("stop: RTDE停止脚本发送超时或失败")
-            else:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(0.5)
-                s.connect((ip, SCRIPT_PORT))
-                s.sendall(stop_script.encode("utf-8"))
-                s.close()
-                any_ok = True
-                logging.debug("stop: 通过原始socket发送停止脚本")
-        except Exception as e:
-            logging.debug(f"stop: 发送停止脚本时忽略异常: {e}")
-
-        # 3. Emergency stop (stopj) best-effort
+        # 2. Emergency stop (stopj) best-effort
         emergency_script = "sec emerg():\n  stopj(1.0)\nend\n"
         try:
             if rc and rc.isConnected():
@@ -587,32 +781,46 @@ class URDriver:
         except Exception as e:
             logging.debug(f"stop: 发送紧急停止命令时忽略异常: {e}")
 
+        if any_ok:
+            self.mark_control_stale("停止命令可能已终止 rtde_control")
+
         return any_ok
 
+    def stop_extrusion(self):
+        """仅关闭挤出输出，不停止机械臂运动。"""
+        script = self._build_stop_extrusion_script(script_name="stop_extrusion")
+        ok = self._send_secondary_script(script)
+        if ok:
+            logging.info("挤出停止指令已发送")
+            self.mark_control_stale("secondary script 执行后控制脚本可能被替换")
+        else:
+            logging.warning("挤出停止指令发送失败")
+        return ok
+
     def reconnect_control_interface(self, log_callback=None):
-        """单独重连控制接口"""
+        """兼容旧接口：执行完整修复后确认控制通道是否恢复。"""
         def log(msg):
-            if log_callback: log_callback(msg)
-            else: print(msg)
+            if log_callback:
+                log_callback(msg)
+            else:
+                print(msg)
 
         with self._lock:
-            if not self.ip_address: return False
+            ip = str(self.ip_address or "").strip()
 
-            try:
-                if self.rc:
-                    try: self.rc.disconnect()
-                    except: pass
+        if not ip:
+            return False
 
-                log("重连控制接口...")
-                self.rc = RTDEControlInterface(self.ip_address, RTDEControlInterface.FLAG_UPLOAD_SCRIPT)
-                if self.rc.isConnected():
-                    self.read_only = False
-                    log("控制接口恢复！")
-                    return True
-            except Exception as e:
-                log(f"重连失败: {e}")
-                self.read_only = True
-                return False
+        log("控制通道修复已升级为完整连接修复...")
+        ok = self.repair_connection(ip, log_callback=log_callback)
+        snapshot = self.get_connection_snapshot()
+        if ok and snapshot.control == ChannelState.UP:
+            log("控制接口恢复！")
+            return True
+
+        detail = snapshot.control_reason or snapshot.last_error or "控制接口未就绪"
+        log(f"重连失败: {detail}")
+        return False
 
     # === 新增：运动控制方法 (来自 RTDE Control API) ===
 
@@ -1565,7 +1773,7 @@ class URDriver:
             return True
 
         log(f"检测到 rtde_control 失效: {detail}")
-        log("正在重连控制接口...")
+        log("正在执行完整连接修复...")
 
         success = self.reconnect_control_interface(log_callback)
 

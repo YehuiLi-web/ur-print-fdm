@@ -7,11 +7,24 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from ur_print_fdm.config.defaults import DEFAULTS
+from ur_print_fdm.config.robot_targets import (
+    ensure_robot_target_config,
+    sync_active_robot_target_to_runtime_config,
+    sync_runtime_robot_config_to_active_target,
+)
 from ur_print_fdm.paths import ensure_app_data_dir
 
 
 def default_config_path() -> Path:
     return ensure_app_data_dir() / "config.json"
+
+
+def _has_explicit_robot_targets(data: dict[str, Any]) -> bool:
+    robot = data.get("robot")
+    if not isinstance(robot, dict):
+        return False
+    targets = robot.get("targets")
+    return isinstance(targets, dict) and bool(targets)
 
 
 class ConfigManager:
@@ -39,6 +52,7 @@ class ConfigManager:
     def load_config(self) -> dict[str, Any]:
         if not self.config_file.exists():
             self.config = copy.deepcopy(self.default_config)
+            ensure_robot_target_config(self.config)
             return self.config
 
         with self._lock:
@@ -49,12 +63,21 @@ class ConfigManager:
                 return self.config
 
             self.config = copy.deepcopy(self.default_config)
-            self._recursive_update(self.config, loaded if isinstance(loaded, dict) else {})
+            loaded_data = loaded if isinstance(loaded, dict) else {}
+            self._recursive_update(self.config, loaded_data)
+            if not _has_explicit_robot_targets(loaded_data):
+                robot = self.config.get("robot")
+                if isinstance(robot, dict):
+                    robot.pop("targets", None)
+            ensure_robot_target_config(self.config)
             return self.config
 
     def save_config(self) -> bool:
         with self._lock:
             try:
+                ensure_robot_target_config(self.config, sync_runtime_from_active=False)
+                sync_runtime_robot_config_to_active_target(self.config)
+                sync_active_robot_target_to_runtime_config(self.config)
                 self.config_file.parent.mkdir(parents=True, exist_ok=True)
                 payload = json.dumps(self.config, indent=2, ensure_ascii=False)
 
@@ -75,7 +98,11 @@ class ConfigManager:
     def snapshot(self) -> dict[str, Any]:
         """Return a deep-copied snapshot of the current config dict."""
         with self._lock:
-            return copy.deepcopy(self.config)
+            snap = copy.deepcopy(self.config)
+        ensure_robot_target_config(snap, sync_runtime_from_active=False)
+        sync_runtime_robot_config_to_active_target(snap)
+        sync_active_robot_target_to_runtime_config(snap)
+        return snap
 
     def apply_dict(self, data: dict[str, Any]) -> None:
         """
@@ -86,7 +113,15 @@ class ConfigManager:
         """
         with self._lock:
             self.config = copy.deepcopy(self.default_config)
-            self._recursive_update(self.config, data if isinstance(data, dict) else {})
+            payload = data if isinstance(data, dict) else {}
+            self._recursive_update(self.config, payload)
+            if not _has_explicit_robot_targets(payload):
+                robot = self.config.get("robot")
+                if isinstance(robot, dict):
+                    robot.pop("targets", None)
+            ensure_robot_target_config(self.config, sync_runtime_from_active=False)
+            sync_runtime_robot_config_to_active_target(self.config)
+            sync_active_robot_target_to_runtime_config(self.config)
 
     def get(self, key_path: str, default: Any = None) -> Any:
         with self._lock:

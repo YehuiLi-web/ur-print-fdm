@@ -14,7 +14,7 @@ warnings.warn(
 
 from ur_print_fdm.ui.workers.threads import (  # noqa: F401
     ConnectionThread,
-    ControlReconnectThread,
+    ConnectionRepairThread,
     DashboardCmdThread,
     MonitorThread,
     ProgramManagementThread,
@@ -27,8 +27,8 @@ __all__ = [
     "ScriptSendThread",
     "StopThread",
     "ConnectionThread",
+    "ConnectionRepairThread",
     "MonitorThread",
-    "ControlReconnectThread",
     "DashboardCmdThread",
     "SFTPUploadThread",
     "ProgramManagementThread",

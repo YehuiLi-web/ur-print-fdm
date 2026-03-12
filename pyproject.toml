@@ -6,23 +6,29 @@ build-backend = "setuptools.build_meta"
 name = "ur-print-fdm"
 version = "0.1.0"
 description = "UR5 Fiber Printer Studio (Expert Edition)"
-readme = "readme.md"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "PyQt6>=6.5.0",
-  "numpy>=1.24.0",
-  "ur_rtde>=2.0.0",
-  "paramiko>=3.0.0",
+  "PyQt6>=6.5,<7",
+  "numpy>=1.24,<3",
+  "ur-rtde>=2.0,<3",
+  "paramiko>=3,<4",
 ]
 
 [project.optional-dependencies]
+editor = [
+  "PyQt6-QScintilla>=2.14,<3",
+]
 dev = [
-  "pytest>=7",
-  "pytest-qt>=4",
-  "pre-commit>=3.5.0",
-  "ruff>=0.6",
-  "mypy>=1.8",
+  "pytest>=7,<9",
+  "pytest-qt>=4,<5",
+  "pre-commit>=3.5,<5",
+  "ruff>=0.6,<1",
+  "mypy>=1.8,<2",
   "types-paramiko",
+]
+build = [
+  "pyinstaller>=6,<7",
 ]
 
 [project.gui-scripts]
@@ -34,7 +40,7 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ur_print_fdm*"]
-exclude = ["tests*", "__pycache__*", "说明文档资料*"]
+exclude = ["ur_print_fdm.tests*", "__pycache__*", "说明文档资料*"]
 
 [tool.setuptools.package-data]
 ur_print_fdm = ["ui/resources/icons/*.svg"]

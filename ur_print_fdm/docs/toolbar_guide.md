@@ -38,14 +38,14 @@
 - **停止按钮 (`self.btn_global_stop`)**: 红色。紧急终止机器人运动。
 
 ### 5. 辅助区 (Auxiliary)
-- **自动重连勾选框**: 控制丢失权限时是否自动尝试夺回。
-- **手动重连按钮 (`self.btn_reconnect`)**:
+- **修复连接按钮 (`self.btn_repair_connection`)**:
   - **图标**: 使用 `assets/icons/reconnect.svg`。
-  - **逻辑**: 调用 `trigger_reconnect()`。当处于“只读模式”时高亮。
+  - **逻辑**: 调用 `trigger_connection_repair()`，执行一次完整修复（重新建立监控、Dashboard、控制通道）。
+  - **启用时机**: 当连接处于降级或故障状态时启用。
 
 ---
 
 ## ⚙️ 逻辑维护
-- **状态联动**: 如果你想修改“只读模式下哪些按钮可用”，请修改 `_update_status_indicator` 函数中的 `is_controllable` 逻辑判断。
+- **状态联动**: 工具栏状态现在统一由 `_apply_connection_snapshot()` 驱动。
 - **视觉微调**: 工具栏的边距和间距在 `_init_toolbar` 的 `toolbar.setStyleSheet` 中设置。
 - **SVG 图标**: 重连图标位于 `assets/icons/reconnect.svg`，如需更换图标，只需替换文件并保持文件名一致。

@@ -3,7 +3,7 @@
 from ur_print_fdm.ui.workers.production_processor import ProductionProcessor
 from ur_print_fdm.ui.workers.threads import (
     ConnectionThread,
-    ControlReconnectThread,
+    ConnectionRepairThread,
     DashboardCmdThread,
     MonitorThread,
     ProgramManagementThread,
@@ -17,8 +17,8 @@ __all__ = [
     "ScriptSendThread",
     "StopThread",
     "ConnectionThread",
+    "ConnectionRepairThread",
     "MonitorThread",
-    "ControlReconnectThread",
     "DashboardCmdThread",
     "SFTPUploadThread",
     "ProgramManagementThread",

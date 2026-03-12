@@ -29,6 +29,7 @@ from ur_print_fdm.constants import DEFAULT_MODBUS_EXTRUDER
 from ur_print_fdm.core.dashboard_driver import SimpleDashboardDriver
 from ur_print_fdm.shared.logging_context import trace_context
 from ur_print_fdm.shared.net import is_valid_ip
+from ur_print_fdm.ui.workers.loader_binding import build_loader_binding_note
 
 
 class ProductionProcessor(QThread):
@@ -111,7 +112,7 @@ class ProductionProcessor(QThread):
         self._pause_event.clear()
 
     def stop(self) -> None:
-        """Request stop (abort queue)."""
+        """Request stop for the current program without cutting extrusion."""
         self.running = False
         self._stop_event.set()
 
@@ -174,6 +175,7 @@ class ProductionProcessor(QThread):
                         break
 
                     # 2) Load loader.urp (full path, URSim style)
+                    self._log(build_loader_binding_note(self.loader_urp_path, self.remote_loader_name), level="INFO")
                     resp = db.load_program(self.loader_urp_path)
                     if not self._dashboard_ok(resp):
                         self._log(
@@ -244,6 +246,7 @@ class ProductionProcessor(QThread):
         t0 = time.time()
         while time.time() - t0 < timeout_s:
             if self._should_abort():
+                self._handle_abort_request(db)
                 return False
 
             self._apply_control_requests(db)
@@ -286,7 +289,7 @@ class ProductionProcessor(QThread):
                 return False
 
             if self._should_abort():
-                self._stop_program_and_kill(db)
+                self._handle_abort_request(db)
                 return False
 
             self._apply_control_requests(db)
@@ -310,12 +313,6 @@ class ProductionProcessor(QThread):
             resp = db.pause()
             if self._dashboard_ok(resp):
                 self.paused = True
-                # CB3: program pause will freeze URScript, but DO/Modbus outputs may remain latched.
-                # Best-effort: cut extrusion on pause to avoid oozing / overheating.
-                try:
-                    self._send_stop_extrusion_secondary()
-                except Exception:
-                    pass
             self._pause_event.clear()
 
         if self._resume_event.is_set() and self.paused:
@@ -325,12 +322,21 @@ class ProductionProcessor(QThread):
             self._resume_event.clear()
 
     def _stop_program_and_kill(self, db: SimpleDashboardDriver) -> None:
-        try:
-            db.stop()
-        except Exception:
-            pass
+        self._stop_program(db)
         try:
             self._send_stop_extrusion_secondary()
+        except Exception:
+            pass
+
+    def _handle_abort_request(self, db: SimpleDashboardDriver) -> None:
+        if self.emergency_abort or self.isInterruptionRequested():
+            self._stop_program_and_kill(db)
+            return
+        self._stop_program(db)
+
+    def _stop_program(self, db: SimpleDashboardDriver) -> None:
+        try:
+            db.stop()
         except Exception:
             pass
 

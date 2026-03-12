@@ -3,9 +3,12 @@
 from PyQt6.QtCore import QThread, pyqtSignal
 import logging
 import os
+import time
 
 from ur_print_fdm.config import config_manager
+from ur_print_fdm.core.dashboard_driver import SimpleDashboardDriver
 from ur_print_fdm.shared.logging_context import trace_context
+from ur_print_fdm.ui.workers.loader_binding import build_loader_binding_note
 
 
 class ScriptSendThread(QThread):
@@ -104,8 +107,8 @@ class StopThread(QThread):
                 success = self.driver.stop()
                 if not self._should_stop:
                     if success is not False:
-                        logger.warning("机器人已紧急停止 (stopj + stopScript)", extra={"ui_level": "SUCCESS"})
-                        self.finished_signal.emit("机器人已紧急停止 (stopj + stopScript)")
+                        logger.info("机械臂停止指令已发送", extra={"ui_level": "SUCCESS"})
+                        self.finished_signal.emit("机械臂停止指令已发送")
                     else:
                         logger.warning("停止指令已发送，但可能未完全执行", extra={"ui_level": "WARN"})
                         self.finished_signal.emit("停止指令已发送，但可能未完全执行")
@@ -116,6 +119,38 @@ class StopThread(QThread):
 
     def stop_gracefully(self):
         """请求线程优雅停止"""
+        self._should_stop = True
+
+
+class StopExtrusionThread(QThread):
+    """专门负责发送停止挤出指令的线程，避免 UI 阻塞。"""
+
+    finished_signal = pyqtSignal(str)
+
+    def __init__(self, driver, *, trace_id: str | None = None):
+        super().__init__()
+        self.driver = driver
+        self._should_stop = False
+        self.trace_id = trace_id
+
+    def run(self):
+        logger = logging.getLogger("ur_print_fdm.worker.stop_extrusion")
+        with trace_context(self.trace_id):
+            try:
+                success = self.driver.stop_extrusion()
+                if not self._should_stop:
+                    if success is not False:
+                        logger.info("挤出输出已关闭", extra={"ui_level": "SUCCESS"})
+                        self.finished_signal.emit("挤出输出已关闭")
+                    else:
+                        logger.warning("停止挤出指令已发送，但可能未完全执行", extra={"ui_level": "WARN"})
+                        self.finished_signal.emit("停止挤出指令已发送，但可能未完全执行")
+            except Exception as e:
+                logger.exception("Stop extrusion raised exception: %s", e)
+                if not self._should_stop:
+                    self.finished_signal.emit(f"停止挤出指令发送异常: {e}")
+
+    def stop_gracefully(self):
         self._should_stop = True
 
 
@@ -156,53 +191,65 @@ class MonitorThread(QThread):
     # 🆕 修改信号定义：增加一个 list 用于传递 tcp_offset
     # 🆕 修改信号定义：增加 speed (float)
     status_signal = pyqtSignal(list, list, list, float)
+    snapshot_signal = pyqtSignal(object)
 
     def __init__(self, driver):
         super().__init__()
         self.driver = driver
+        self._last_dashboard_probe_at = 0.0
 
     def run(self):
         while not self.isInterruptionRequested():
-            if self.driver.is_connected():
+            now = time.monotonic()
+            probe_dashboard = (now - self._last_dashboard_probe_at) >= 2.0
+            if probe_dashboard:
+                self._last_dashboard_probe_at = now
+
+            try:
+                snapshot = self.driver.probe_connection_snapshot(probe_dashboard=probe_dashboard)
+            except Exception as e:
+                logging.debug(f"MonitorThread: 探测连接状态时发生异常: {e}")
+                snapshot = self.driver.get_connection_snapshot()
+
+            self.snapshot_signal.emit(snapshot)
+
+            if snapshot.can_monitor:
                 try:
                     # 接收 4 个返回值
                     tcp, joints, offset, speed = self.driver.get_status()
                     if tcp and joints:
                         self.status_signal.emit(tcp, joints, offset, speed)
                 except Exception as e:
-                    # 更好的错误处理：记录错误但不崩溃
-                    import logging
                     logging.debug(f"MonitorThread: 获取状态时发生异常: {e}")
-                    # 如果连接断开，可以尝试标记为断开
-                    if "End of file" in str(e) or "disconnected" in str(e).lower():
-                        # 连接已断开，退出循环
-                        break
             self.msleep(100)
 
 
-class ControlReconnectThread(QThread):
-    """专门负责后台重连控制接口的线程"""
+class ConnectionRepairThread(QThread):
+    """完整修复连接：断开并重新建立 Receive / Dashboard / Control。"""
+
     result_signal = pyqtSignal(bool, str)
-    log_signal = pyqtSignal(str) # 新增
-    def __init__(self, driver, *, trace_id: str | None = None):
+
+    def __init__(self, driver, ip: str | None = None, *, trace_id: str | None = None):
         super().__init__()
         self.driver = driver
+        self.ip = str(ip or "").strip()
         self.trace_id = trace_id
 
     def run(self):
-        logger = logging.getLogger("ur_print_fdm.worker.reconnect")
+        logger = logging.getLogger("ur_print_fdm.worker.repair")
         with trace_context(self.trace_id):
             try:
-                logger.info("Reconnecting control interface")
-                if self.driver.reconnect_control_interface():
-                    logger.info("控制接口已恢复", extra={"ui_level": "SUCCESS"})
-                    self.result_signal.emit(True, "控制接口已恢复")
+                logger.info("Repairing connection session")
+                ok = bool(self.driver.repair_connection(self.ip or None))
+                if ok:
+                    logger.info("连接修复完成", extra={"ui_level": "SUCCESS"})
+                    self.result_signal.emit(True, "连接修复完成")
                 else:
-                    logger.error("控制接口重连失败", extra={"ui_level": "ERROR"})
-                    self.result_signal.emit(False, "控制接口重连失败")
+                    logger.error("连接修复失败", extra={"ui_level": "ERROR"})
+                    self.result_signal.emit(False, "连接修复失败")
             except Exception as e:
-                logger.exception("Reconnect raised exception: %s", e)
-                self.result_signal.emit(False, f"控制接口重连异常: {e}")
+                logger.exception("Repair raised exception: %s", e)
+                self.result_signal.emit(False, f"连接修复异常: {e}")
 
 
 class DashboardCmdThread(QThread):
@@ -254,7 +301,9 @@ class SFTPUploadThread(QThread):
         remote_filename=None,
         *,
         also_upload_loader: bool = False,
+        load_program_after_upload: bool = False,
         remote_loader_name: str | None = None,
+        loader_urp_path: str | None = None,
         username=None,
         password=None,
         port=None,
@@ -266,15 +315,30 @@ class SFTPUploadThread(QThread):
         self.remote_dir = remote_dir or config_manager.get("robot.sftp.remote_dir", "/home/ur/ursim-current/programs")
         self.remote_filename = remote_filename or os.path.basename(self.local_path)
         self.also_upload_loader = bool(also_upload_loader)
+        self.load_program_after_upload = bool(load_program_after_upload)
         self.remote_loader_name = (
             remote_loader_name
             or config_manager.get("robot.dashboard.remote_loader_name", "remote_loader.script")
             or "remote_loader.script"
         )
+        self.loader_urp_path = (
+            loader_urp_path
+            or config_manager.get("robot.dashboard.loader_urp_path", f"{self.remote_dir.rstrip('/')}/loader.urp")
+            or f"{self.remote_dir.rstrip('/')}/loader.urp"
+        )
         self.username = username or config_manager.get("robot.sftp.username", "ur")
         self.password = password or config_manager.get("robot.sftp.password", "easybot")
         self.port = int(port or config_manager.get("robot.sftp.port", 22))
         self.trace_id = trace_id
+
+    @staticmethod
+    def _dashboard_ok(resp: str | None) -> bool:
+        if resp is None:
+            return False
+        low = str(resp).strip().lower()
+        if not low:
+            return True
+        return not any(k in low for k in ("error", "failed", "not found", "no such", "not connected"))
 
     def run(self):
         logger = logging.getLogger("ur_print_fdm.worker.sftp")
@@ -317,13 +381,47 @@ class SFTPUploadThread(QThread):
                 transport.close()
                 self.progress_signal.emit(100)
 
+                load_resp = None
+                if self.load_program_after_upload:
+                    db = SimpleDashboardDriver()
+                    try:
+                        db.set_ip(self.ip)
+                        load_resp = db.load_program(self.loader_urp_path)
+                    finally:
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+
+                    if not self._dashboard_ok(load_resp):
+                        uploaded_paths = [f"- {remote_path_primary}"]
+                        if self.also_upload_loader:
+                            uploaded_paths.append(f"- {remote_path_loader}（用于 loader.urp）")
+                        self.result_signal.emit(
+                            False,
+                            "文件上传成功，但加载失败：\n"
+                            + "\n".join(uploaded_paths)
+                            + f"\n- Dashboard 加载失败：{self.loader_urp_path}\n"
+                            + f"- 响应：{load_resp}",
+                        )
+                        return
+
                 logger.info("SFTP upload success: %s", filename)
-                if self.also_upload_loader:
+                if self.load_program_after_upload:
+                    message = ["上传并加载成功！", f"- {remote_path_primary}"]
+                    if self.also_upload_loader:
+                        message.append(f"- {remote_path_loader}（用于 loader.urp）")
+                    message.append(f"- Dashboard 已加载：{self.loader_urp_path}")
+                    if self.also_upload_loader:
+                        message.append(f"- {build_loader_binding_note(self.loader_urp_path, self.remote_loader_name)}")
+                    self.result_signal.emit(True, "\n".join(message))
+                elif self.also_upload_loader:
                     self.result_signal.emit(
                         True,
                         "上传成功！\n"
                         f"- {remote_path_primary}\n"
-                        f"- {remote_path_loader}（用于 loader.urp）",
+                        f"- {remote_path_loader}（用于 loader.urp）\n"
+                        f"- {build_loader_binding_note(self.loader_urp_path, self.remote_loader_name)}",
                     )
                 else:
                     self.result_signal.emit(True, f"上传成功！\n- {remote_path_primary}")

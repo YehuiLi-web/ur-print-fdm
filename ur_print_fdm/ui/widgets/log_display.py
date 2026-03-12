@@ -4,9 +4,10 @@
 参考 VSCode / MATLAB 风格设计
 """
 from PyQt6.QtWidgets import QTextEdit, QMenu, QApplication
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QTimer
+from PyQt6.QtGui import QAction, QCursor
 from ur_print_fdm.ui.resources.icon_manager import IconManager
+from ur_print_fdm.ui import theme
 
 
 class LogTextEdit(QTextEdit):
@@ -32,6 +33,16 @@ class LogTextEdit(QTextEdit):
         self._user_is_scrolling = False
         self._auto_scroll = True
         self._filter_level = "ALL"
+        self._scrollbar_visible = None
+
+        # 去掉输出框额外容器感，让滚动条直接贴住右侧。
+        self.setFrameStyle(0)
+        self.setViewportMargins(0, 0, 0, 0)
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+        self.viewport().installEventFilter(self)
+        self.installEventFilter(self)
+        self.verticalScrollBar().installEventFilter(self)
 
         # 创建右键菜单
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -39,6 +50,64 @@ class LogTextEdit(QTextEdit):
         
         # 监听滚动事件
         self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
+        self._set_scrollbar_visibility(False)
+
+    def eventFilter(self, obj, event):
+        if obj in (self, self.viewport(), self.verticalScrollBar()):
+            if event.type() == QEvent.Type.Enter:
+                self._set_scrollbar_visibility(True)
+            elif event.type() == QEvent.Type.Leave:
+                QTimer.singleShot(0, self._sync_scrollbar_visibility)
+        return super().eventFilter(obj, event)
+
+    def _sync_scrollbar_visibility(self):
+        if not self.isVisible():
+            self._set_scrollbar_visibility(False)
+            return
+        inside = self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+        self._set_scrollbar_visibility(inside)
+
+    def _set_scrollbar_visibility(self, visible: bool):
+        if self._scrollbar_visible == visible:
+            return
+        self._scrollbar_visible = visible
+
+        t = theme.current_tokens()
+        handle_bg = t["scroll_handle"] if visible else "transparent"
+        handle_hover = t["scroll_handle_hover"] if visible else "transparent"
+        handle_pressed = t.get("scroll_handle_pressed", handle_hover) if visible else "transparent"
+
+        self.verticalScrollBar().setStyleSheet(
+            f"""
+            QScrollBar:vertical {{
+                border: none;
+                background: {t["bg_secondary"]};
+                width: 6px;
+                margin: 0;
+                padding: 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {handle_bg};
+                min-height: 28px;
+                border-radius: 3px;
+                margin: 0;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {handle_hover};
+            }}
+            QScrollBar::handle:vertical:pressed {{
+                background: {handle_pressed};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+                border: none;
+                background: transparent;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: transparent;
+            }}
+            """
+        )
 
     def _on_scroll_changed(self, value):
         """检测用户是否手动滚动"""

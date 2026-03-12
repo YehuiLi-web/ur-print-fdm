@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget,
                               QStackedWidget, QTextBrowser, QDialogButtonBox,
-                              QLabel, QPushButton, QLineEdit, QComboBox,
-                              QSplitter, QWidget, QFormLayout, QTextEdit, QListWidgetItem, QListView, QFrame)
+                              QLabel, QPushButton, QLineEdit,
+                              QSplitter, QWidget, QFormLayout, QTextEdit, QListWidgetItem, QFrame)
 from ur_print_fdm.ui.widgets.styled_message_box import StyledMessageBox
 from PyQt6.QtCore import Qt, QDateTime, pyqtSignal
 import json
@@ -9,6 +9,7 @@ from pathlib import Path
 from ur_print_fdm.ui.resources.icon_manager import IconManager
 from ur_print_fdm.ui import theme
 from ur_print_fdm.ui.style_factory import StyleFactory
+from ur_print_fdm.ui.widgets.fused_combo_box import FusedComboBox
 
 class NoteEditDialog(QDialog):
     """添加/编辑注意事项的对话框"""
@@ -32,10 +33,7 @@ class NoteEditDialog(QDialog):
         form_layout.setSpacing(12)
         form_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.combo_category = QComboBox()
-        category_view = QListView()
-        category_view.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        self.combo_category.setView(category_view)  # 修复弹出框覆盖问题
+        self.combo_category = FusedComboBox()
         self.combo_category.addItems(self.categories)
         self.combo_category.setMinimumHeight(32)
         form_layout.addRow("分类:", self.combo_category)

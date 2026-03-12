@@ -1,0 +1,190 @@
+from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget
+
+
+def test_fused_combo_box_supports_selection_and_popup():
+    app = QApplication.instance() or QApplication([])
+
+    from ur_print_fdm.ui.widgets.fused_combo_box import FusedComboBox
+
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    combo = FusedComboBox()
+    combo.setFixedWidth(140)
+    combo.addItem("生产模式", "production")
+    combo.addItem("直连模式", "direct")
+    layout.addWidget(combo)
+
+    try:
+        host.show()
+        app.processEvents()
+
+        assert combo.count() == 2
+        assert combo.currentText() == "生产模式"
+        assert combo.currentData() == "production"
+        assert combo.findText("直连模式") == 1
+        assert combo.findData("direct") == 1
+
+        combo.showPopup()
+        app.processEvents()
+
+        assert combo.property("expanded") is True
+        assert combo._popup.isVisible()
+        assert combo._popup.width() == combo.width()
+        assert combo._popup._rows[0].layout().contentsMargins().left() == 0
+
+        combo.setCurrentIndex(1)
+        assert combo.currentText() == "直连模式"
+        assert combo.currentData() == "direct"
+
+        combo.hidePopup()
+        app.processEvents()
+
+        assert combo.property("expanded") is False
+    finally:
+        host.close()
+        host.deleteLater()
+        combo.deleteLater()
+        app.processEvents()
+
+
+def test_fused_combo_box_editable_mode_tracks_custom_text():
+    app = QApplication.instance() or QApplication([])
+
+    from ur_print_fdm.ui.widgets.fused_combo_box import FusedComboBox
+
+    combo = FusedComboBox(editable=True, variant="toolbar_combo")
+    combo.addItems(["192.168.56.101", "192.168.56.102"])
+
+    try:
+        assert combo.isEditable() is True
+        assert combo.lineEdit() is not None
+        assert combo.currentText() == "192.168.56.101"
+
+        combo.setCurrentText("192.168.56.102")
+        assert combo.currentIndex() == 1
+        assert combo.currentText() == "192.168.56.102"
+
+        combo.setCurrentText("10.0.0.8")
+        assert combo.currentIndex() == -1
+        assert combo.currentText() == "10.0.0.8"
+    finally:
+        combo.deleteLater()
+        app.processEvents()
+
+
+def test_fused_combo_box_prefers_longest_option_for_width_hint():
+    app = QApplication.instance() or QApplication([])
+
+    from ur_print_fdm.ui.widgets.fused_combo_box import FusedComboBox
+
+    combo = FusedComboBox()
+    combo.addItems(["真实机械臂", "虚拟机械臂 (URSim)"])
+
+    try:
+        assert combo.preferredWidthHint() > 160
+        assert combo.popupWidthHint() >= combo.preferredWidthHint()
+        assert combo.sizeHint().width() == combo.preferredWidthHint()
+    finally:
+        combo.deleteLater()
+        app.processEvents()
+
+
+def test_fused_combo_box_popup_stays_flush_with_fixed_width_host():
+    app = QApplication.instance() or QApplication([])
+
+    from ur_print_fdm.ui.widgets.fused_combo_box import FusedComboBox
+
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    combo = FusedComboBox(editable=True, variant="toolbar_combo")
+    combo.setFixedWidth(160)
+    combo.addItems(["192.168.137.120", "192.168.137.100"])
+    layout.addWidget(combo)
+
+    try:
+        host.show()
+        app.processEvents()
+
+        combo.showPopup()
+        app.processEvents()
+
+        assert combo._popup.width() == combo.width()
+        assert combo._popup.x() == combo.mapToGlobal(combo.rect().topLeft()).x()
+    finally:
+        combo.hidePopup()
+        host.close()
+        host.deleteLater()
+        combo.deleteLater()
+        app.processEvents()
+
+
+def test_fused_combo_box_popup_rows_keep_uniform_size():
+    app = QApplication.instance() or QApplication([])
+
+    from ur_print_fdm.ui.widgets.fused_combo_box import FusedComboBox, _ComboOption
+
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    combo = FusedComboBox()
+    combo.setFixedWidth(180)
+    combo.addItems(["短", "中等长度", "这是一个更长一些的选项"])
+    layout.addWidget(combo)
+
+    try:
+        host.show()
+        app.processEvents()
+
+        combo.showPopup()
+        app.processEvents()
+
+        rows = combo._popup._rows
+        assert len(rows) == 3
+        expected_height = max(_ComboOption.ITEM_HEIGHT, combo.height())
+
+        heights = {row.height() for row in rows}
+        widths = {row.width() for row in rows}
+        label_heights = {row._label.height() for row in rows}
+        label_widths = {row._label.width() for row in rows}
+
+        assert heights == {expected_height}
+        assert len(widths) == 1
+        assert label_heights == {expected_height}
+        assert len(label_widths) == 1
+    finally:
+        combo.hidePopup()
+        host.close()
+        host.deleteLater()
+        combo.deleteLater()
+        app.processEvents()
+
+
+def test_fused_combo_box_popup_rows_follow_owner_height():
+    app = QApplication.instance() or QApplication([])
+
+    from ur_print_fdm.ui.widgets.fused_combo_box import FusedComboBox
+
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    combo = FusedComboBox()
+    combo.setFixedWidth(180)
+    combo.setFixedHeight(36)
+    combo.addItems(["虚拟机械臂 (URSim)", "真实机械臂"])
+    layout.addWidget(combo)
+
+    try:
+        host.show()
+        app.processEvents()
+
+        combo.showPopup()
+        app.processEvents()
+
+        rows = combo._popup._rows
+        assert rows
+        assert {row.height() for row in rows} == {combo.height()}
+        assert {row._label.height() for row in rows} == {combo.height()}
+    finally:
+        combo.hidePopup()
+        host.close()
+        host.deleteLater()
+        combo.deleteLater()
+        app.processEvents()

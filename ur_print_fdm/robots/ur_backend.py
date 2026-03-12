@@ -27,6 +27,9 @@ class URDriverBackend:
     def is_read_only(self) -> bool:
         return bool(self._driver.is_read_only())
 
+    def get_connection_snapshot(self):
+        return self._driver.get_connection_snapshot()
+
     def get_status(self) -> RobotStatus:
         tcp, joints, offset, speed = self._driver.get_status()
         return RobotStatus(

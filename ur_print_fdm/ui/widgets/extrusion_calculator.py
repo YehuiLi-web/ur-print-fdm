@@ -4,9 +4,9 @@
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QGroupBox,
                              QFormLayout, QDoubleSpinBox, QSpinBox, QPushButton,
-                             QLabel, QComboBox)
+                             QLabel)
 from PyQt6.QtCore import pyqtSignal
-from ur_print_fdm.ui.widgets.combobox_fix import fix_combobox_popup
+from ur_print_fdm.ui.widgets.fused_combo_box import FusedComboBox
 import math
 
 
@@ -31,8 +31,7 @@ class ExtrusionCalculatorWidget(QWidget):
             flow_layout = QFormLayout(flow_group)
 
             # 计算模式选择
-            self.calc_mode = QComboBox()
-            fix_combobox_popup(self.calc_mode)  # 修复弹出框覆盖问题
+            self.calc_mode = FusedComboBox()
             self.calc_mode.addItems(["正向: 速度 → 流量", "反向: 流量 → 速度"])
             self.calc_mode.currentIndexChanged.connect(self._on_calc_mode_changed)
 

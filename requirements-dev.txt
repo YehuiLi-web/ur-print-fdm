@@ -1,0 +1,3 @@
+# Contributor environment from the repository root:
+# runtime + test/lint tools + optional editor extras + packaging tools.
+-e .[dev,editor,build]

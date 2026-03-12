@@ -6,21 +6,72 @@ UR Print FDM 是一个基于 PyQt6 的 Universal Robots 打印控制桌面程序
 
 - 保留现有 GUI、插件入口、配置键名和两种运行模式。
 - 默认自动化测试只跑 `ur_print_fdm/tests`。
-- 根目录原先的 `test_*.py` 已迁移到 `manual_checks/`，作为手工联调脚本保留。
+- 历史手工联调脚本统一保存在 `manual_checks/`，不再散落在仓库根目录。
 
-## 开发环境
+## 项目结构
+
+- `ur_print_fdm/`: 主程序包、UI、核心逻辑、插件与自动化测试。
+- `manual_checks/`: 需要真实设备、URSim 或人工观察的联调脚本。
+- `URscript/`: 示例脚本、工艺脚本和相关输入文件。
+- `docs/`: 架构说明、重构计划和补充文档；UI 调用链说明位于 `docs/ui/`。
+- 根目录: 提供统一安装入口，包括 `pyproject.toml`、`requirements*.txt`、`pytest.ini`、打包脚本和安装器配置。
+
+## 安装
 
 - Python: 3.11+
-- 依赖安装:
+- 依赖版本的唯一来源: 根目录 `pyproject.toml`
+- 直接安装清单:
+  - `requirements.txt`: 适合只需要运行程序的环境
+  - `requirements-dev.txt`: 适合要参与开发、测试和打包的环境
+
+运行环境安装:
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 py -3.11 -m pip install -U pip
-py -3.11 -m pip install -e .\ur_print_fdm[dev]
+py -3.11 -m pip install -r requirements.txt
+```
+
+开发环境安装:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+py -3.11 -m pip install -U pip
+py -3.11 -m pip install -r requirements-dev.txt
 ```
 
 如果本机没有可用的 Python 解释器，先安装 Python 3.11，再执行以上命令。
+
+如果需要完整的内置脚本编辑器增强能力，但又不想安装整套开发工具，也可以单独安装：
+
+```powershell
+py -3.11 -m pip install -e .[editor]
+```
+
+## 依赖版本
+
+运行时依赖:
+
+- `PyQt6>=6.5,<7`
+- `numpy>=1.24,<3`
+- `ur-rtde>=2.0,<3`
+- `paramiko>=3,<4`
+
+可选增强:
+
+- `PyQt6-QScintilla>=2.14,<3`：启用更完整的脚本编辑器体验
+
+开发与打包工具:
+
+- `pytest>=7,<9`
+- `pytest-qt>=4,<5`
+- `pre-commit>=3.5,<5`
+- `ruff>=0.6,<1`
+- `mypy>=1.8,<2`
+- `types-paramiko`
+- `pyinstaller>=6,<7`
 
 ## 启动
 
@@ -49,6 +100,26 @@ py -3.11 -m pytest -q
 
 - `pytest.ini` 当前只收集 `ur_print_fdm/tests`。
 - `manual_checks/` 中的脚本不会被默认测试命令收集。
+
+## 打包
+
+日常重新打包，直接运行根目录的 `build.bat` 即可。
+
+```powershell
+.\build.bat
+```
+
+如果想先手动补齐打包依赖，也可以直接使用开发依赖清单：
+
+```powershell
+py -3.11 -m pip install -r requirements-dev.txt
+```
+
+它会自动完成三件事：
+
+- 生成目录版 `dist/UR Print FDM/`
+- 生成绿色单文件版 `dist/UR Print FDM Portable.exe`
+- 如果检测到 Inno Setup 6，再生成安装版 `installer_output/UR_Print_FDM_Setup_0.1.0.exe`
 
 ## 手工联调脚本
 

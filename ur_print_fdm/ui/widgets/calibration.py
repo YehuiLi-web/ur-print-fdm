@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGroupBox, QForm
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 
+from ur_print_fdm.shared.connection_state import ChannelState
 from ur_print_fdm.ui.mixins.theme_aware import ThemeAwareMixin
 from ur_print_fdm.ui.style_factory import StyleFactory
 
@@ -486,30 +487,37 @@ class AutoCalibrationWidget(QWidget, ThemeAwareMixin):
 
     def _ensure_rtde_control_ready(self) -> bool:
         """
-        确保 rtde_control 可用，失效时自动重连
+        确保控制通道可用，失效时执行完整连接修复
         :return: True 如果可用，False 如果不可用
         """
         alive, detail = self.main.driver.is_rtde_control_alive()
         if alive:
             return True
 
-        # rtde_control 失效，尝试重连
         self.main.log(f"检测到 rtde_control 失效: {detail}")
-        self.main.log("正在重连控制接口...")
-
-        success = self.main.driver.reconnect_control_interface(self.main.log)
-
-        if success:
-            self.main.log("rtde_control 已恢复")
-            return True
+        repair = getattr(self.main, "repair_connection_blocking", None)
+        if callable(repair):
+            success = bool(repair(reason="标定操作需要恢复控制通道，正在执行完整连接修复..."))
         else:
-            QMessageBox.warning(self, "控制接口失效",
-                "rtde_control 重连失败。\n\n"
-                "可能原因：\n"
-                "1. 示教器正在运行程序\n"
-                "2. 机器人处于保护停止状态\n\n"
-                "请确保示教器处于空闲状态后重试。")
-            return False
+            success = self.main.driver.reconnect_control_interface(self.main.log)
+
+        snapshot_getter = getattr(self.main.driver, "get_connection_snapshot", None)
+        snapshot = snapshot_getter() if callable(snapshot_getter) else None
+        if success and snapshot is not None and snapshot.control == ChannelState.UP:
+            self.main.log("控制通道已恢复")
+            return True
+
+        QMessageBox.warning(
+            self,
+            "控制接口失效",
+            "控制通道修复失败。\n\n"
+            "可能原因：\n"
+            "1. 示教器正在运行程序\n"
+            "2. 机器人处于保护停止状态\n"
+            "3. Dashboard 或监控链路未恢复\n\n"
+            "请确保示教器处于空闲状态后重试。",
+        )
+        return False
     
     def _zero_ft_sensor(self):
         if not self._check_connection():

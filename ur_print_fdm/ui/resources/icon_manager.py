@@ -87,6 +87,8 @@ class IconManager:
         'help': 'icons/help.svg',
         'recent': 'icons/recent.svg',
         'edit': 'icons/edit.svg',
+        'eye': 'icons/eye.svg',
+        'eye_off': 'icons/eye_off.svg',
         'reconnect': 'icons/refresh.svg',
         'app_icon': 'icons/app_icon.svg',
         'upload': 'icons/upload.svg',

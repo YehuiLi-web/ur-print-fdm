@@ -32,6 +32,8 @@ class ExtrusionCalculatorWidget(QWidget):
 
             # 计算模式选择
             self.calc_mode = FusedComboBox()
+            self.calc_mode.setControlHeight(36)
+            self.calc_mode.setPopupRowHeight(36)
             self.calc_mode.addItems(["正向: 速度 → 流量", "反向: 流量 → 速度"])
             self.calc_mode.currentIndexChanged.connect(self._on_calc_mode_changed)
 

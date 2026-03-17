@@ -66,16 +66,6 @@ class _NoWheelDoubleSpinBox(QDoubleSpinBox):
         event.ignore()
 
 
-def _rgba(color: str, alpha: float) -> str:
-    color = str(color or "").strip()
-    if color.startswith("#") and len(color) == 7:
-        r = int(color[1:3], 16)
-        g = int(color[3:5], 16)
-        b = int(color[5:7], 16)
-        return f"rgba({r}, {g}, {b}, {alpha:.3f})"
-    return color
-
-
 class PreferencesDialog(QDialog):
     settings_applied = pyqtSignal()
 
@@ -195,6 +185,11 @@ class PreferencesDialog(QDialog):
     def _prepare_editor(self, editor: QWidget, *, max_width: int | None = None) -> QWidget:
         if max_width is not None:
             editor.setMaximumWidth(max_width)
+        if isinstance(editor, FusedComboBox):
+            editor.setControlHeight(28)
+            editor.setPopupRowHeight(28)
+            if max_width is not None:
+                editor.setPopupMaximumWidth(max_width)
         if isinstance(editor, QLineEdit):
             editor.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             if editor.echoMode() != QLineEdit.EchoMode.Password:
@@ -394,9 +389,9 @@ class PreferencesDialog(QDialog):
         accent_hover = str(t.get("accent_hover", "#0e639c"))
         accent_blue = str(t.get("accent_blue", "#2196F3"))
         selection_bg = str(t.get("selection_bg", "#264f78"))
-        popup_surface_bg = _rgba(bg_secondary, 0.11)
-        popup_hover_bg = "rgba(255, 255, 255, 0.020)"
-        popup_selected_bg = "rgba(255, 255, 255, 0.055)"
+        popup_surface_bg = bg_secondary
+        popup_hover_bg = bg_hover
+        popup_selected_bg = bg_hover_strong
         radius = str(t.get("radius", "4px"))
         radius_lg = str(t.get("radius_lg", "6px"))
         btn_bg = str(t.get("btn_bg", "#3c3c3c"))
@@ -474,12 +469,17 @@ class PreferencesDialog(QDialog):
                 border-radius: {radius_lg};
                 color: {text};
             }}
-            QDialog#preferencesDialog QLineEdit,
-            QDialog#preferencesDialog QSpinBox,
-            QDialog#preferencesDialog QDoubleSpinBox {{
+            QDialog#preferencesDialog QLineEdit {{
                 min-height: 26px;
                 padding: 0 10px;
                 font-size: 13px;
+            }}
+            QDialog#preferencesDialog QSpinBox,
+            QDialog#preferencesDialog QDoubleSpinBox {{
+                min-height: 22px;
+                padding: 0 8px 0 6px;
+                font-size: 13px;
+                font-weight: 500;
             }}
             QDialog#preferencesDialog QPlainTextEdit {{
                 padding: 10px 12px;
@@ -488,45 +488,65 @@ class PreferencesDialog(QDialog):
             QDialog#preferencesDialog QLineEdit:hover,
             QDialog#preferencesDialog QSpinBox:hover,
             QDialog#preferencesDialog QDoubleSpinBox:hover,
-            QDialog#preferencesDialog QPlainTextEdit:hover,
-            QDialog#preferencesDialog QFrame[ui_role="fused_combo"]:hover {{
+            QDialog#preferencesDialog QPlainTextEdit:hover {{
                 border-color: {border_light};
                 background: {bg_panel};
+            }}
+            QDialog#preferencesDialog QFrame[ui_role="fused_combo"]:hover {{
+                border-color: {border_light};
+                background: {bg_secondary};
             }}
             QDialog#preferencesDialog QLineEdit:focus,
             QDialog#preferencesDialog QSpinBox:focus,
             QDialog#preferencesDialog QDoubleSpinBox:focus,
-            QDialog#preferencesDialog QPlainTextEdit:focus,
-            QDialog#preferencesDialog QFrame[ui_role="fused_combo"][focused="true"] {{
+            QDialog#preferencesDialog QPlainTextEdit:focus {{
                 border: 1px solid {accent_blue};
                 background: {bg_panel};
+            }}
+            QDialog#preferencesDialog QFrame[ui_role="fused_combo"][focused="true"] {{
+                border: 1px solid {border_light};
+                background: {bg_secondary};
             }}
             QDialog#preferencesDialog QSpinBox::up-button,
             QDialog#preferencesDialog QSpinBox::down-button,
             QDialog#preferencesDialog QDoubleSpinBox::up-button,
-            QDialog#preferencesDialog QDoubleSpinBox::down-button,
+            QDialog#preferencesDialog QDoubleSpinBox::down-button {{
+                width: 0px;
+                height: 0px;
+                margin: 0px;
+                padding: 0px;
+                border: none;
+                background: transparent;
+            }}
             QDialog#preferencesDialog QSpinBox::up-arrow,
             QDialog#preferencesDialog QSpinBox::down-arrow,
             QDialog#preferencesDialog QDoubleSpinBox::up-arrow,
             QDialog#preferencesDialog QDoubleSpinBox::down-arrow {{
+                image: none;
                 width: 0px;
                 height: 0px;
                 border: none;
                 background: transparent;
             }}
             QDialog#preferencesDialog QFrame[ui_role="fused_combo"] {{
-                min-height: 30px;
+                min-height: 22px;
             }}
             QDialog#preferencesDialog QFrame[ui_role="fused_combo"][expanded="true"] {{
-                border-color: {accent_blue};
+                border-color: {border_light};
+            }}
+            QDialog#preferencesDialog QFrame[ui_role="fused_combo"][expanded="true"][popup_side="below"] {{
                 border-bottom-left-radius: 0px;
                 border-bottom-right-radius: 0px;
+            }}
+            QDialog#preferencesDialog QFrame[ui_role="fused_combo"][expanded="true"][popup_side="above"] {{
+                border-top-left-radius: 0px;
+                border-top-right-radius: 0px;
             }}
             QDialog#preferencesDialog QFrame[ui_role="fused_combo"] QLabel[ui_role="fused_combo_label"],
             QDialog#preferencesDialog QFrame[ui_role="fused_combo"] QLineEdit[ui_role="fused_combo_edit"] {{
                 background: transparent;
                 border: none;
-                padding: 0 8px 0 10px;
+                padding: 0 8px 0 6px;
                 color: {text};
                 font-size: 13px;
                 font-weight: 500;
@@ -543,12 +563,35 @@ class PreferencesDialog(QDialog):
                 border-top-right-radius: {radius_lg};
                 border-bottom-right-radius: {radius_lg};
             }}
+            QDialog#preferencesDialog QFrame[ui_role="fused_combo"][expanded="true"][popup_side="below"] QFrame[ui_role="fused_combo_arrow_host"] {{
+                border-bottom-right-radius: 0px;
+            }}
+            QDialog#preferencesDialog QFrame[ui_role="fused_combo"][expanded="true"][popup_side="above"] QFrame[ui_role="fused_combo_arrow_host"] {{
+                border-top-right-radius: 0px;
+            }}
             QDialog#preferencesDialog QFrame[ui_role="fused_combo_popup_surface"] {{
                 background: {popup_surface_bg};
-                border: 1px solid rgba(255, 255, 255, 0.06);
-                border-top: none;
+                border: 1px solid {border_light};
+                border-top-left-radius: {radius_lg};
+                border-top-right-radius: {radius_lg};
                 border-bottom-left-radius: {radius_lg};
                 border-bottom-right-radius: {radius_lg};
+            }}
+            QDialog#preferencesDialog QFrame[ui_role="fused_combo_popup_surface"][popup_side="below"] {{
+                border-top: none;
+                border-top-left-radius: 0px;
+                border-top-right-radius: 0px;
+            }}
+            QDialog#preferencesDialog QFrame[ui_role="fused_combo_popup_surface"][popup_side="above"] {{
+                border-bottom: none;
+                border-bottom-left-radius: 0px;
+                border-bottom-right-radius: 0px;
+            }}
+            QDialog#preferencesDialog QWidget[ui_role="fused_combo_popup_viewport"],
+            QDialog#preferencesDialog QScrollArea[ui_role="fused_combo_popup_scroll"],
+            QDialog#preferencesDialog QWidget[ui_role="fused_combo_popup_content"] {{
+                background: transparent;
+                border: none;
             }}
             QDialog#preferencesDialog QFrame[ui_role="fused_combo_popup_item"] {{
                 background: transparent;
@@ -564,9 +607,20 @@ class PreferencesDialog(QDialog):
             QDialog#preferencesDialog QFrame[ui_role="fused_combo_popup_item"][selected="true"][highlighted="true"] {{
                 background: {popup_selected_bg};
             }}
-            QDialog#preferencesDialog QFrame[ui_role="fused_combo_popup_item"][last="true"] {{
+            QDialog#preferencesDialog QFrame[ui_role="fused_combo_popup_item"][last="true"][popup_side="below"] {{
                 border-bottom-left-radius: {radius_lg};
                 border-bottom-right-radius: {radius_lg};
+            }}
+            QDialog#preferencesDialog QFrame[ui_role="fused_combo_popup_item"][first="true"][popup_side="above"] {{
+                border-top-left-radius: {radius_lg};
+                border-top-right-radius: {radius_lg};
+            }}
+            QDialog#preferencesDialog QLabel[ui_role="fused_combo_popup_item_label"] {{
+                background: transparent;
+                color: {text};
+                padding: 0 8px 0 6px;
+                font-size: 13px;
+                font-weight: 500;
             }}
             QDialog#preferencesDialog QPushButton {{
                 min-height: 26px;

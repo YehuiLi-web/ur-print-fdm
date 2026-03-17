@@ -74,6 +74,8 @@ class DeleteConfirmationDialog(QDialog):
 class FileExplorerWidget(QWidget):
     """文件资源管理器组件，用于显示项目文件结构"""
 
+    COMPACT_MINIMUM_WIDTH = 196
+
     script_loaded = pyqtSignal(str)  # 当双击脚本文件时发出信号（用于直接加载内容）
     file_requested = pyqtSignal(str)  # 当请求打开文件时发出信号（用于在标签页中打开）
     log_requested = pyqtSignal(str)  # 当需要记录日志时发出信号
@@ -82,6 +84,7 @@ class FileExplorerWidget(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.setMinimumWidth(self.COMPACT_MINIMUM_WIDTH)
         self.current_project_path = None
         self.confirmation_setting = None  # 存储配置
         self.icon_manager = IconManager()  # 图标管理器实例
@@ -501,7 +504,7 @@ class FileExplorerWidget(QWidget):
                 menu.addAction(action_open)
             
             if ext.lower() in ['.script', '.txt']:
-                action_estimate = QAction("脚本估算...", self)
+                action_estimate = QAction(self.icon_manager.get_action_icon('script_estimate'), "脚本估算...", self)
                 action_estimate.triggered.connect(lambda: self.estimate_requested.emit(item_path))
                 menu.addAction(action_estimate)
 

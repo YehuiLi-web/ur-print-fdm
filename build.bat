@@ -9,7 +9,7 @@ set "PORTABLE_SPEC=ur_print_fdm_portable.spec"
 set "INSTALLER_SCRIPT=installer.iss"
 set "PORTABLE_EXE=dist\UR Print FDM Portable.exe"
 set "APP_DIR=dist\UR Print FDM"
-set "SETUP_EXE=installer_output\UR_Print_FDM_Setup_0.1.0.exe"
+set "SETUP_EXE=installer_output\UR_Print_FDM_Setup_0.1.1.exe"
 set "INNO_PATH="
 
 echo ============================================

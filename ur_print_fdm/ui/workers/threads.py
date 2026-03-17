@@ -8,6 +8,7 @@ import time
 from ur_print_fdm.config import config_manager
 from ur_print_fdm.core.dashboard_driver import SimpleDashboardDriver
 from ur_print_fdm.shared.logging_context import trace_context
+from ur_print_fdm.shared.upload_preprocessor import prepare_upload_source
 from ur_print_fdm.ui.workers.loader_binding import build_loader_binding_note
 
 
@@ -94,9 +95,10 @@ class StopThread(QThread):
     """专门负责发送停止指令的线程，防止点击停止时界面卡死"""
     finished_signal = pyqtSignal(str) # 完成信号，带回日志消息
 
-    def __init__(self, driver, *, trace_id: str | None = None):
+    def __init__(self, driver, *, preserve_control: bool = False, trace_id: str | None = None):
         super().__init__()
         self.driver = driver
+        self.preserve_control = bool(preserve_control)
         self._should_stop = False
         self.trace_id = trace_id
 
@@ -104,11 +106,18 @@ class StopThread(QThread):
         logger = logging.getLogger("ur_print_fdm.worker.stop")
         with trace_context(self.trace_id):
             try:
-                success = self.driver.stop()
+                if self.preserve_control:
+                    success = self.driver.manual_stop()
+                else:
+                    success = self.driver.stop()
                 if not self._should_stop:
                     if success is not False:
-                        logger.info("机械臂停止指令已发送", extra={"ui_level": "SUCCESS"})
-                        self.finished_signal.emit("机械臂停止指令已发送")
+                        if self.preserve_control:
+                            logger.info("机械臂原生停止指令已发送", extra={"ui_level": "SUCCESS"})
+                            self.finished_signal.emit("机械臂原生停止指令已发送")
+                        else:
+                            logger.info("机械臂停止指令已发送", extra={"ui_level": "SUCCESS"})
+                            self.finished_signal.emit("机械臂停止指令已发送")
                     else:
                         logger.warning("停止指令已发送，但可能未完全执行", extra={"ui_level": "WARN"})
                         self.finished_signal.emit("停止指令已发送，但可能未完全执行")
@@ -152,6 +161,58 @@ class StopExtrusionThread(QThread):
 
     def stop_gracefully(self):
         self._should_stop = True
+
+
+class LinearMoveThread(QThread):
+    """后台执行单次 move_l，避免 UI 阻塞。"""
+
+    result_signal = pyqtSignal(bool, str, object)  # ok, message, target_pose
+
+    def __init__(
+        self,
+        driver,
+        target_pose,
+        *,
+        speed: float = 0.05,
+        acceleration: float = 0.2,
+        asynchronous: bool = False,
+        trace_id: str | None = None,
+    ):
+        super().__init__()
+        self.driver = driver
+        self.target_pose = list(target_pose or [])
+        self.speed = float(speed)
+        self.acceleration = float(acceleration)
+        self.asynchronous = bool(asynchronous)
+        self.trace_id = trace_id
+
+    def run(self):
+        logger = logging.getLogger("ur_print_fdm.worker.linear_move")
+        with trace_context(self.trace_id):
+            try:
+                ok = bool(
+                    self.driver.move_l(
+                        self.target_pose,
+                        self.speed,
+                        self.acceleration,
+                        self.asynchronous,
+                    )
+                )
+                if ok:
+                    logger.info(
+                        "Base jog move completed",
+                        extra={"ui_level": "SUCCESS"},
+                    )
+                    self.result_signal.emit(True, "Base 点动完成", list(self.target_pose))
+                else:
+                    logger.warning(
+                        "Base jog move failed",
+                        extra={"ui_level": "WARN"},
+                    )
+                    self.result_signal.emit(False, "Base 点动失败", list(self.target_pose))
+            except Exception as e:
+                logger.exception("Linear move raised exception: %s", e)
+                self.result_signal.emit(False, f"Base 点动异常: {e}", list(self.target_pose))
 
 
 class ConnectionThread(QThread):
@@ -369,13 +430,20 @@ class SFTPUploadThread(QThread):
                     pct = int((transferred / total) * 100)
                     self.progress_signal.emit(max(0, min(100, pct)))
 
-                # 1) 主文件
-                sftp.put(self.local_path, remote_path_primary, callback=_cb)
+                with prepare_upload_source(self.local_path) as upload_source:
+                    if upload_source.normalized:
+                        logger.info(
+                            "Normalized text upload newlines to LF before SFTP: %s",
+                            os.path.basename(self.local_path),
+                        )
 
-                # 2) 可选：覆盖 remote_loader（用于生产模式）
-                if self.also_upload_loader:
-                    self.progress_signal.emit(0)
-                    sftp.put(self.local_path, remote_path_loader, callback=_cb)
+                    # 1) 主文件
+                    sftp.put(upload_source.path, remote_path_primary, callback=_cb)
+
+                    # 2) 可选：覆盖 remote_loader（用于生产模式）
+                    if self.also_upload_loader:
+                        self.progress_signal.emit(0)
+                        sftp.put(upload_source.path, remote_path_loader, callback=_cb)
 
                 sftp.close()
                 transport.close()

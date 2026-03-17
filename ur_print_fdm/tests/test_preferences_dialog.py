@@ -109,6 +109,20 @@ def test_preferences_dialog_fixed_inline_fields_expand_and_stay_left_aligned():
     assert 'QWidget[ui_role="pref_inline_field"]' in dlg.styleSheet()
 
 
+def test_preferences_dialog_prepares_fused_combo_as_compact_form_control():
+    app = QApplication.instance() or QApplication([])
+
+    dlg = PreferencesDialog()
+    combo = FusedComboBox()
+
+    dlg._prepare_editor(combo, max_width=220)
+
+    assert combo.maximumWidth() == 220
+    assert combo.popupMaximumWidth() == 220
+    assert combo.popupRowHeight() == 28
+    assert combo.minimumHeight() == 28
+
+
 def test_preferences_dialog_scroll_pages_anchor_to_top_left():
     app = QApplication.instance() or QApplication([])
 

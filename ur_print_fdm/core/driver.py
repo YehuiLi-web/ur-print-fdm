@@ -16,6 +16,7 @@ from ur_print_fdm.shared.connection_state import (
 )
 from ur_print_fdm.shared.net import is_valid_ip
 from ur_print_fdm.shared.script_sanitizer import sanitize_script_content
+from ur_print_fdm.shared.upload_preprocessor import prepare_upload_source
 
 # === 引入官方库 ===
 # 我们尝试多种导入方式，以兼容不同的环境配置
@@ -33,10 +34,18 @@ except ImportError:
         RTDEControlInterface = None
         RTDEReceiveInterface = None
         DashboardClient = None
+
+try:
+    from rtde_io import RTDEIOInterface
+except ImportError:
+    RTDEIOInterface = None
+
+
 class URDriver:
     def __init__(self):
         self.rc = None # Control Interface (运动控制: moveL, moveJ, 脚本发送)
         self.rr = None # Receive Interface (数据读取: 位置, 速度, IO)
+        self.rio = None # RTDE IO Interface (原生数字 IO 控制)
         self.db = None # Dashboard Client (系统控制: 暂停, 继续, 急停, 弹窗)
 
         self.connected = False
@@ -100,6 +109,7 @@ class URDriver:
             self.ip_address = ""
         self.rc = None
         self.rr = None
+        self.rio = None
         self.db = None
         self._session_requested = False
         self._receive_state = ChannelState.DOWN
@@ -216,14 +226,59 @@ class URDriver:
         return self.connect(ip, log_callback=log_callback)
 
     def _build_stop_extrusion_script(self, *, script_name: str = "kill_io") -> str:
-        modbus_name = str(config_manager.get("printing.modbus_extruder", "MODBUS_1") or "").strip()
-        do_pin = int(config_manager.get("printing.extruder_io_pin", 0) or 0)
+        modbus_name, do_pin = self._get_extrusion_control_config()
         kill_lines = [f"sec {script_name}():\n"]
         if modbus_name:
             kill_lines.append(f'  modbus_set_output_register("{modbus_name}", 0)\n')
         kill_lines.append(f"  set_standard_digital_out({do_pin}, False)\n")
         kill_lines.append("end\n")
         return "".join(kill_lines)
+
+    @staticmethod
+    def _call_with_timeout(func, *, timeout: float = 2.0, label: str = "operation"):
+        """Execute a driver-side operation with a hard timeout."""
+        result = [None]
+        exception = [None]
+
+        def target():
+            try:
+                result[0] = func()
+            except Exception as e:
+                exception[0] = e
+
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+        thread.join(timeout)
+
+        if thread.is_alive():
+            logging.warning("%s timed out", label)
+            return False
+        if exception[0]:
+            logging.error("%s failed: %s", label, exception[0])
+            return False
+        return result[0]
+
+    def _get_extrusion_control_config(self) -> tuple[str, int]:
+        modbus_name = str(config_manager.get("printing.modbus_extruder", "MODBUS_1") or "").strip()
+        do_pin = int(config_manager.get("printing.extruder_io_pin", 0) or 0)
+        return modbus_name, do_pin
+
+    def _set_standard_digital_out(self, pin: int, value: bool) -> bool:
+        with self._lock:
+            rio_ref = self.rio
+
+        if rio_ref is None:
+            return False
+
+        try:
+            return bool(rio_ref.setStandardDigitalOut(int(pin), bool(value)))
+        except Exception as e:
+            logging.warning("RTDE IO setStandardDigitalOut(%s, %s) failed: %s", pin, value, e)
+            return False
+
+    def _stop_extrusion_via_native_io(self) -> bool:
+        _modbus_name, do_pin = self._get_extrusion_control_config()
+        return self._set_standard_digital_out(do_pin, False)
 
     def _send_secondary_script(self, script: str, *, timeout_s: float = 0.5) -> bool:
         with self._lock:
@@ -337,6 +392,27 @@ class URDriver:
                 self._control_state = ChannelState.DOWN
                 self._control_reason = str(e)
 
+            # === 4. 连接原生 IO 端 (RTDE IO) ===
+            if RTDEIOInterface is None:
+                log("RTDE IO 接口不可用，将在需要时回退到 secondary script。")
+                self.rio = None
+            else:
+                try:
+                    log("连接 IO 接口 (RTDE IO)...")
+                    self.rio = RTDEIOInterface(self.ip_address)
+                    io_connected = True
+                    is_connected = getattr(self.rio, "isConnected", None)
+                    if callable(is_connected):
+                        io_connected = bool(is_connected())
+                    if io_connected:
+                        log("IO 接口连接成功！(原生数字输出)")
+                    else:
+                        raise ConnectionError("IO 接口未就绪")
+                except Exception as e:
+                    log(f"IO 接口连接失败: {e}")
+                    log("停挤出等操作将回退到 secondary script。")
+                    self.rio = None
+
             self._last_error = ""
             self._phase = self._derive_phase_locked()
             self._sync_legacy_flags_locked()
@@ -353,6 +429,13 @@ class URDriver:
             if self.rr:
                 try: self.rr.disconnect()
                 except Exception as e: logging.debug(f"断开接收接口时忽略异常: {e}")
+            if self.rio:
+                try:
+                    disconnect = getattr(self.rio, "disconnect", None)
+                    if callable(disconnect):
+                        disconnect()
+                except Exception as e:
+                    logging.debug(f"断开 IO 接口时忽略异常: {e}")
             if self.db:
                 try: self.db.disconnect()
                 except Exception as e: logging.debug(f"断开仪表盘接口时忽略异常: {e}")
@@ -646,7 +729,13 @@ class URDriver:
             transport = paramiko.Transport((self.ip_address, port))
             transport.connect(username=username, password=password)
             sftp = paramiko.SFTPClient.from_transport(transport)
-            sftp.put(local_file_path, remote_path)
+            with prepare_upload_source(local_file_path) as upload_source:
+                if upload_source.normalized:
+                    logging.info(
+                        "upload_program_file: normalized text upload newlines to LF: %s",
+                        os.path.basename(local_file_path),
+                    )
+                sftp.put(upload_source.path, remote_path)
             sftp.close()
             transport.close()
             return True
@@ -713,32 +802,6 @@ class URDriver:
 
     def stop(self):
         """强制停止机械臂/当前程序 (Dashboard stop + stopj)。"""
-        import threading
-
-        def stop_with_timeout(func, timeout=2.0):
-            """Execute a function with timeout"""
-            result = [None]
-            exception = [None]
-
-            def target():
-                try:
-                    result[0] = func()
-                except Exception as e:
-                    exception[0] = e
-
-            thread = threading.Thread(target=target)
-            thread.daemon = True
-            thread.start()
-            thread.join(timeout)
-
-            if thread.is_alive():
-                logging.warning("stop: Operation timed out")
-                return False
-            if exception[0]:
-                logging.error(f"stop: Operation failed: {exception[0]}")
-                return False
-            return result[0]
-
         with self._lock:
             ip = str(self.ip_address or "").strip()
             db = self.db
@@ -752,7 +815,7 @@ class URDriver:
         # 1. Dashboard stop with timeout
         if db and db.isConnected():
             try:
-                res = stop_with_timeout(lambda: db.stop(), timeout=2.0)
+                res = self._call_with_timeout(lambda: db.stop(), timeout=2.0, label="dashboard stop")
                 if res is not False:
                     any_ok = True
                     logging.info("Dashboard 停止指令已发送")
@@ -765,7 +828,11 @@ class URDriver:
         emergency_script = "sec emerg():\n  stopj(1.0)\nend\n"
         try:
             if rc and rc.isConnected():
-                res = stop_with_timeout(lambda: rc.sendCustomScript(emergency_script), timeout=2.0)
+                res = self._call_with_timeout(
+                    lambda: rc.sendCustomScript(emergency_script),
+                    timeout=2.0,
+                    label="secondary emergency stop",
+                )
                 if res is not False:
                     any_ok = True
                     logging.debug("stop: 发送紧急停止命令")
@@ -786,15 +853,56 @@ class URDriver:
 
         return any_ok
 
+    def manual_stop(self):
+        """优先使用原生 RTDE 停止当前运动，尽量保留控制通道。"""
+        with self._lock:
+            rc = self.rc
+            read_only = self.read_only
+
+        if rc is None or read_only:
+            logging.warning("manual_stop: control interface not available")
+            return False
+
+        operations = (
+            ("speed_stop", lambda: self.speed_stop(10.0)),
+            ("stop_l", lambda: self.stop_l(10.0, False)),
+            ("stop_j", lambda: self.stop_j(2.0, False)),
+        )
+
+        any_ok = False
+        for label, op in operations:
+            try:
+                result = self._call_with_timeout(op, timeout=1.0, label=label)
+                if result is not False:
+                    any_ok = True
+            except Exception as e:
+                logging.debug("manual_stop: %s raised: %s", label, e)
+
+        if not any_ok:
+            logging.warning("manual_stop: all native RTDE stop operations failed")
+        return any_ok
+
     def stop_extrusion(self):
         """仅关闭挤出输出，不停止机械臂运动。"""
+        modbus_name, _do_pin = self._get_extrusion_control_config()
+        native_io_ok = self._stop_extrusion_via_native_io()
+
+        if native_io_ok and not modbus_name:
+            logging.info("挤出停止指令已通过 RTDE IO 发送")
+            return True
+
         script = self._build_stop_extrusion_script(script_name="stop_extrusion")
         ok = self._send_secondary_script(script)
         if ok:
             logging.info("挤出停止指令已发送")
-            self.mark_control_stale("secondary script 执行后控制脚本可能被替换")
+            if native_io_ok and modbus_name:
+                logging.info("Modbus 挤出寄存器已通过 secondary script 清零")
+            self.mark_control_stale("停止挤出时 secondary script 接管了控制脚本")
         else:
-            logging.warning("挤出停止指令发送失败")
+            if native_io_ok and modbus_name:
+                logging.warning("数字输出已关闭，但 Modbus 挤出寄存器回退失败")
+            else:
+                logging.warning("挤出停止指令发送失败")
         return ok
 
     def reconnect_control_interface(self, log_callback=None):

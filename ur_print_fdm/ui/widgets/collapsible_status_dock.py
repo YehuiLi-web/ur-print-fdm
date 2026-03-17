@@ -9,15 +9,17 @@
 4. 运动状态 - TCP速度
 5. 关节角度 - J1-J6 关节角
 6. TCP 位姿 - 工具中心点位置/姿态
-7. TCP 偏移 - 工具偏移量
+7. Base 点动 - 基于 Base 坐标系的单步移动
+8. TCP 偏移 - 工具偏移量
 """
 import math
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QFrame, QToolButton, QProgressBar, QGridLayout,
                              QListWidget, QListWidgetItem, QAbstractItemView,
-                             QMenu, QApplication, QSizePolicy)
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QAction
+                             QMenu, QApplication, QSizePolicy, QPushButton,
+                             QButtonGroup)
+from PyQt6.QtCore import Qt, QSize, QRectF, QPointF, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QPainter, QPen, QPolygonF
 from ur_print_fdm.config import config_manager
 from ur_print_fdm.ui import theme
 
@@ -136,12 +138,69 @@ def get_progress_bar_style(t, chunk_color=None):
         QProgressBar::chunk {{ background-color: {color}; }}
     """
 
-def get_joint_bar_style(t, chunk_color):
-    """获取关节进度条样式"""
+def with_alpha(color_value, alpha):
+    """返回带透明度的 QColor，用于自绘控件。"""
+    color = QColor(color_value)
+    color.setAlphaF(max(0.0, min(1.0, float(alpha))))
+    return color
+
+
+def get_segment_button_style(t):
+    """获取紧凑分段按钮样式。"""
     return f"""
-        QProgressBar {{ background: {t["bg_hover"]}; border: none; }}
-        QProgressBar::chunk {{ background: {chunk_color}; }}
+        QPushButton {{
+            background-color: {t["bg_secondary"]};
+            color: {t["text_muted"]};
+            border: 1px solid {t["border"]};
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 7.5pt;
+            font-weight: 600;
+        }}
+        QPushButton:hover:!checked {{
+            background-color: {t["bg_hover"]};
+            color: {t["text"]};
+        }}
+        QPushButton:pressed:!checked {{
+            background-color: {t["bg_hover_strong"]};
+        }}
+        QPushButton:checked {{
+            background-color: {t["accent_blue"]};
+            border-color: {t["accent_blue"]};
+            color: {t["text_on_accent"]};
+        }}
+        QPushButton:disabled {{
+            background-color: {t["bg_secondary"]};
+            border-color: {t["border_light"]};
+            color: {t["text_dim"]};
+        }}
     """
+
+
+JOINT_DISPLAY_LIMIT_DEG = 360.0
+JOINT_WARNING_THRESHOLD_DEG = 240.0
+JOINT_DANGER_THRESHOLD_DEG = 320.0
+
+
+def get_joint_state_color(t, angle_deg):
+    """根据关节角绝对值选择强调色。"""
+    magnitude = abs(angle_deg)
+    if magnitude >= JOINT_DANGER_THRESHOLD_DEG:
+        return t["danger"]
+    if magnitude >= JOINT_WARNING_THRESHOLD_DEG:
+        return t["warning"]
+    return t["success"]
+
+
+def get_joint_value_style(t, accent_color, available=True):
+    """关节数值标签样式。"""
+    if not available:
+        return f"color: {t['text_dim']}; font-family: {t['font_mono']}; font-size: 8.5pt;"
+
+    return (
+        f"color: {accent_color}; "
+        f"font-family: {t['font_mono']}; font-size: 8.5pt; font-weight: 600;"
+    )
 
 
 class StatusDockRestoreHandle(QToolButton):
@@ -198,6 +257,10 @@ class CollapsibleBox(QFrame):
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
 
+        self.header_meta_label = QLabel("")
+        self.header_meta_label.setVisible(False)
+        header_layout.addWidget(self.header_meta_label)
+
         # Toggle Button
         self.toggle_btn = QToolButton()
         self.toggle_btn.setArrowType(Qt.ArrowType.DownArrow)
@@ -234,7 +297,15 @@ class CollapsibleBox(QFrame):
         self.title_label.setStyleSheet(
             f"font-weight: bold; color: {t['text']}; font-size: 8.5pt; letter-spacing: 0.5px;"
         )
+        self.header_meta_label.setStyleSheet(
+            f"color: {t['accent_blue']}; font-family: {t['font_mono']}; font-size: 7.5pt; font-weight: 600;"
+        )
         self.toggle_btn.setStyleSheet(get_toggle_btn_style(t))
+
+    def set_header_meta(self, text: str = ""):
+        """设置标题栏右侧的辅助信息。"""
+        self.header_meta_label.setText(text)
+        self.header_meta_label.setVisible(bool(text))
 
     def toggle_content(self):
         """切换折叠状态"""
@@ -626,80 +697,540 @@ class MotionContent(QWidget):
         self.lbl_velocity.setText(f"{velocity:.1f}")
 
 
+class JogArrowButton(QToolButton):
+    """为 Base 点动卡片绘制大号方向箭头。"""
+
+    LARGE_SIZE = QSize(58, 58)
+    COMPACT_SIZE = QSize(46, 40)
+
+    def __init__(self, direction, axis_label, tooltip, *, compact=False, parent=None):
+        super().__init__(parent)
+        self._direction = str(direction)
+        self._axis_label = str(axis_label)
+        self._compact = bool(compact)
+        self._theme = theme.current_tokens()
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setAutoRaise(True)
+        self.setToolTip(tooltip)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setFixedSize(self.COMPACT_SIZE if self._compact else self.LARGE_SIZE)
+
+    def sizeHint(self):
+        return self.COMPACT_SIZE if self._compact else self.LARGE_SIZE
+
+    def apply_theme(self):
+        self._theme = theme.current_tokens()
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        t = self._theme
+        rect = QRectF(self.rect()).adjusted(0.8, 0.8, -0.8, -0.8)
+        radius = 8.0 if not self._compact else 7.0
+
+        if self.isEnabled():
+            if self.isDown():
+                bg_color = QColor(t["bg_hover_strong"])
+                border_color = QColor(t["accent_blue"])
+            elif self.underMouse():
+                bg_color = QColor(t["bg_hover"])
+                border_color = QColor(t["border"])
+            else:
+                bg_color = QColor(t["bg_panel"])
+                border_color = QColor(t["border_light"])
+            arrow_color = QColor(t["accent_blue"])
+            label_color = QColor(t["text"])
+        else:
+            bg_color = QColor(t["bg_secondary"])
+            border_color = QColor(t["border_light"])
+            arrow_color = with_alpha(t["text_dim"], 0.7)
+            label_color = QColor(t["text_dim"])
+
+        painter.setPen(QPen(border_color, 1))
+        painter.setBrush(bg_color)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        icon_rect = rect.adjusted(8.0, 6.0, -8.0, -16.0 if not self._compact else -13.0)
+        polygon = self._build_arrow_polygon(icon_rect)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(arrow_color)
+        painter.drawPolygon(polygon)
+
+        label_rect = QRectF(rect.left() + 3.0, rect.bottom() - 15.0, rect.width() - 6.0, 11.0)
+        painter.setPen(QPen(label_color))
+        label_font = painter.font()
+        label_font.setPointSizeF(7.0 if self._compact else 7.4)
+        label_font.setBold(True)
+        painter.setFont(label_font)
+        painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, self._axis_label)
+
+    def _build_arrow_polygon(self, rect):
+        templates = {
+            "up": (
+                (0.50, 0.00), (1.00, 0.44), (0.74, 0.44),
+                (0.74, 1.00), (0.26, 1.00), (0.26, 0.44), (0.00, 0.44),
+            ),
+            "down": (
+                (0.00, 0.56), (0.26, 0.56), (0.26, 0.00),
+                (0.74, 0.00), (0.74, 0.56), (1.00, 0.56), (0.50, 1.00),
+            ),
+            "left": (
+                (0.00, 0.50), (0.44, 0.00), (0.44, 0.26),
+                (1.00, 0.26), (1.00, 0.74), (0.44, 0.74), (0.44, 1.00),
+            ),
+            "right": (
+                (0.00, 0.26), (0.56, 0.26), (0.56, 0.00),
+                (1.00, 0.50), (0.56, 1.00), (0.56, 0.74), (0.00, 0.74),
+            ),
+        }
+        points = templates.get(self._direction, templates["up"])
+        return QPolygonF(
+            [
+                QPointF(rect.left() + rect.width() * x, rect.top() + rect.height() * y)
+                for x, y in points
+            ]
+        )
+
+
+class BaseMoveContent(QWidget):
+    """Base 坐标系单步点动卡片。"""
+
+    move_requested = pyqtSignal(float, float, float)
+
+    STEP_OPTIONS_MM = (1.0, 5.0, 10.0)
+
+    def __init__(self):
+        super().__init__()
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        self._available = False
+        self._busy = False
+        self._status_text = "需要监控和控制通道都在线"
+        self.buttons = {}
+        self.step_buttons = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(8)
+
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(6)
+
+        self.lbl_step_title = QLabel("Base 步长")
+        header_row.addWidget(self.lbl_step_title)
+        header_row.addStretch()
+
+        self.step_group = QButtonGroup(self)
+        self.step_group.setExclusive(True)
+        for step_mm in self.STEP_OPTIONS_MM:
+            button = QPushButton(f"{int(step_mm)} mm")
+            button.setCheckable(True)
+            button.setFixedHeight(24)
+            button.setProperty("step_mm", float(step_mm))
+            button.clicked.connect(self._on_step_button_clicked)
+            self.step_group.addButton(button)
+            self.step_buttons[float(step_mm)] = button
+            header_row.addWidget(button)
+        self.step_buttons[1.0].setChecked(True)
+        layout.addLayout(header_row)
+
+        self.grid = QGridLayout()
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setHorizontalSpacing(6)
+        self.grid.setVerticalSpacing(6)
+        self.grid.setColumnStretch(0, 1)
+        self.grid.setColumnStretch(1, 1)
+        self.grid.setColumnStretch(2, 1)
+
+        self._add_move_button("y_pos", 0, 1, "up", "+Y", "Base +Y 方向点动")
+        self._add_move_button("x_neg", 1, 0, "left", "-X", "Base -X 方向点动")
+        self._add_move_button("z_pos", 1, 1, "up", "+Z", "Base +Z 方向点动", compact=True)
+        self._add_move_button("x_pos", 1, 2, "right", "+X", "Base +X 方向点动")
+        self._add_move_button("y_neg", 2, 1, "down", "-Y", "Base -Y 方向点动")
+        self._add_move_button("z_neg", 3, 1, "down", "-Z", "Base -Z 方向点动", compact=True)
+        layout.addLayout(self.grid)
+
+        self.lbl_status = QLabel(self._status_text)
+        self.lbl_status.setWordWrap(True)
+        layout.addWidget(self.lbl_status)
+
+        self.apply_theme()
+        self.set_interaction_state(False, busy=False, reason=self._status_text)
+
+    def _add_move_button(self, key, row, column, direction, axis_label, tooltip, *, compact=False):
+        button = JogArrowButton(direction, axis_label, tooltip, compact=compact)
+        button.clicked.connect(lambda _checked=False, move_key=key: self._emit_move(move_key))
+        self.buttons[key] = button
+        self.grid.addWidget(button, row, column, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def _on_step_button_clicked(self):
+        step = self.current_step_mm()
+        if not self._busy:
+            reason = f"Base 点动就绪，步长 {step:.0f} mm" if self._available else self._status_text
+            self.set_interaction_state(self._available, busy=False, reason=reason)
+
+    def current_step_mm(self):
+        for step_mm, button in self.step_buttons.items():
+            if button.isChecked():
+                return float(step_mm)
+        return self.STEP_OPTIONS_MM[0]
+
+    def apply_theme(self):
+        t = theme.current_tokens()
+        self.lbl_step_title.setStyleSheet(f"color: {t['text_dim']}; font-size: 8pt;")
+        self.lbl_status.setStyleSheet(f"color: {t['text_muted']}; font-size: 8pt;")
+        step_style = get_segment_button_style(t)
+        for button in self.step_buttons.values():
+            button.setStyleSheet(step_style)
+        for button in self.buttons.values():
+            button.apply_theme()
+
+    def set_interaction_state(self, enabled, *, busy=False, reason=""):
+        self._available = bool(enabled)
+        self._busy = bool(busy)
+
+        status_text = str(reason or "").strip()
+        if not status_text:
+            if busy:
+                status_text = "Base 点动执行中..."
+            elif enabled:
+                status_text = f"Base 点动就绪，步长 {self.current_step_mm():.0f} mm"
+            else:
+                status_text = "需要监控和控制通道都在线"
+        self._status_text = status_text
+
+        can_click = self._available and not self._busy
+        for button in self.buttons.values():
+            button.setEnabled(can_click)
+        for button in self.step_buttons.values():
+            button.setEnabled(not self._busy)
+
+        t = theme.current_tokens()
+        if self._busy:
+            color = t["accent_blue"]
+        elif self._available:
+            color = t["success"]
+        else:
+            color = t["text_muted"]
+        self.lbl_status.setStyleSheet(f"color: {color}; font-size: 8pt;")
+        self.lbl_status.setText(self._status_text)
+
+    def _emit_move(self, key):
+        if not self._available or self._busy:
+            return
+
+        step_m = self.current_step_mm() / 1000.0
+        moves = {
+            "x_neg": (-step_m, 0.0, 0.0),
+            "x_pos": (step_m, 0.0, 0.0),
+            "y_pos": (0.0, step_m, 0.0),
+            "y_neg": (0.0, -step_m, 0.0),
+            "z_pos": (0.0, 0.0, step_m),
+            "z_neg": (0.0, 0.0, -step_m),
+        }
+        dx, dy, dz = moves[key]
+        self.move_requested.emit(dx, dy, dz)
+
+
+class JointAngleGauge(QWidget):
+    """以 0° 为中心的双向关节角度指示条。"""
+
+    DISPLAY_LIMIT_DEG = JOINT_DISPLAY_LIMIT_DEG
+    WARNING_THRESHOLD_DEG = JOINT_WARNING_THRESHOLD_DEG
+    DANGER_THRESHOLD_DEG = JOINT_DANGER_THRESHOLD_DEG
+
+    def __init__(self):
+        super().__init__()
+        self._angle_deg = None
+        self._theme = theme.current_tokens()
+        self.setMinimumWidth(72)
+        self.setFixedHeight(14)
+
+    def apply_theme(self):
+        """刷新主题令牌。"""
+        self._theme = theme.current_tokens()
+        self.update()
+
+    def set_angle(self, angle_deg):
+        """设置当前角度，None 表示无数据。"""
+        self._angle_deg = angle_deg
+        self.update()
+
+    def sizeHint(self):
+        return QSize(128, 14)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(1.0, 2.0, -1.0, -2.0)
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+
+        t = self._theme
+        radius = rect.height() / 2.0
+        center_x = rect.center().x()
+        half_width = rect.width() / 2.0
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(t["bg_hover"]))
+        painter.drawRoundedRect(rect, radius, radius)
+
+        painter.setBrush(with_alpha(t["warning"], 0.12))
+        warning_width = half_width * (1.0 - self.WARNING_THRESHOLD_DEG / self.DISPLAY_LIMIT_DEG)
+        if warning_width > 0:
+            painter.drawRoundedRect(QRectF(rect.left(), rect.top(), warning_width, rect.height()), radius, radius)
+            painter.drawRoundedRect(
+                QRectF(rect.right() - warning_width, rect.top(), warning_width, rect.height()),
+                radius,
+                radius,
+            )
+
+        painter.setBrush(with_alpha(t["danger"], 0.16))
+        danger_width = half_width * (1.0 - self.DANGER_THRESHOLD_DEG / self.DISPLAY_LIMIT_DEG)
+        if danger_width > 0:
+            painter.drawRoundedRect(QRectF(rect.left(), rect.top(), danger_width, rect.height()), radius, radius)
+            painter.drawRoundedRect(
+                QRectF(rect.right() - danger_width, rect.top(), danger_width, rect.height()),
+                radius,
+                radius,
+            )
+
+        center_pen = QPen(with_alpha(t["border_light"], 0.26))
+        center_pen.setWidth(1)
+        painter.setPen(center_pen)
+        painter.drawLine(int(center_x), int(rect.top()) + 1, int(center_x), int(rect.bottom()) - 1)
+
+        outline_pen = QPen(QColor(t["border"]))
+        outline_pen.setWidth(1)
+        painter.setPen(outline_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        if self._angle_deg is None:
+            return
+
+        normalized = max(-1.0, min(1.0, self._angle_deg / self.DISPLAY_LIMIT_DEG))
+        if abs(normalized) < 1e-4:
+            marker_color = QColor(get_joint_state_color(t, 0.0))
+            marker_color.setAlphaF(0.75)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(marker_color)
+            painter.drawEllipse(QRectF(center_x - 2.0, rect.center().y() - 2.0, 4.0, 4.0))
+            return
+
+        fill_color = QColor(get_joint_state_color(t, self._angle_deg))
+        fill_rect = QRectF(rect)
+        if normalized > 0:
+            fill_rect.setLeft(center_x)
+            fill_rect.setWidth(max(3.0, half_width * normalized))
+        else:
+            fill_rect.setLeft(center_x + half_width * normalized)
+            fill_rect.setWidth(max(3.0, half_width * abs(normalized)))
+
+        inner_rect = fill_rect.adjusted(0.0, 1.0, 0.0, -1.0)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill_color)
+        painter.drawRoundedRect(inner_rect, min(radius - 1.0, inner_rect.width() / 2.0), radius - 1.0)
+
+        marker_x = center_x + half_width * normalized
+        marker = QRectF(marker_x - 3.5, rect.center().y() - 3.5, 7.0, 7.0)
+        painter.setBrush(fill_color)
+        painter.setPen(QPen(QColor(t["bg_secondary"]), 1))
+        painter.drawEllipse(marker)
+
+
+class JointRow(QWidget):
+    """单个关节的标签、双向角度条和数值读数。"""
+
+    ROW_SPACING = 2
+
+    def __init__(self, joint_id, name):
+        super().__init__()
+        self.joint_id = joint_id
+        self.joint_name = name
+        self._angle_deg = None
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(self.ROW_SPACING)
+
+        self.lbl_joint_id = QLabel(joint_id)
+        self.lbl_joint_name = QLabel(name)
+        self.lbl_value = QLabel("--")
+        self.lbl_value.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        self.gauge = JointAngleGauge()
+        self.gauge.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self.main_layout.addWidget(self.lbl_joint_id)
+        self.main_layout.addWidget(self.gauge, 1)
+        self.main_layout.addWidget(self.lbl_value)
+
+        self.apply_theme()
+        self.set_angle(None)
+
+    def apply_theme(self):
+        """应用关节行主题样式。"""
+        t = theme.current_tokens()
+        self.lbl_joint_id.setStyleSheet(
+            f"color: {t['accent_blue']}; font-size: 8pt; font-weight: 700; letter-spacing: 0.2px;"
+        )
+        self.lbl_joint_name.setVisible(False)
+        self.lbl_joint_name.setStyleSheet(f"color: {t['text_muted']}; font-size: 7.5pt;")
+        self.gauge.apply_theme()
+        accent = get_joint_state_color(t, self._angle_deg or 0.0) if self._angle_deg is not None else t["text_dim"]
+        self.lbl_value.setStyleSheet(get_joint_value_style(t, accent, available=self._angle_deg is not None))
+
+    def set_label_width(self, width):
+        """设置左侧关节标签列宽度。"""
+        self.lbl_joint_id.setFixedWidth(width)
+
+    def set_value_width(self, width):
+        """设置右侧数值列宽度。"""
+        self.lbl_value.setFixedWidth(width)
+
+    def set_angle(self, angle_deg):
+        """更新关节角显示。"""
+        self._angle_deg = angle_deg
+        t = theme.current_tokens()
+
+        if angle_deg is None:
+            self.gauge.set_angle(None)
+            self.lbl_value.setText("--")
+            self.lbl_value.setVisible(True)
+            self.lbl_value.setStyleSheet(get_joint_value_style(t, t["text_dim"], available=False))
+            self.setToolTip(f"{self.joint_id} {self.joint_name}: 无数据")
+            return
+
+        accent = get_joint_state_color(t, angle_deg)
+        self.gauge.set_angle(angle_deg)
+        self.lbl_value.setText(f"{angle_deg:+.2f}°")
+        self.lbl_value.setVisible(True)
+        self.lbl_value.setStyleSheet(get_joint_value_style(t, accent, available=True))
+        self.setToolTip(f"{self.joint_id} {self.joint_name}: {angle_deg:+.2f}°")
+
+
 class JointsContent(QWidget):
     """关节角度内容组件"""
     def __init__(self):
         super().__init__()
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._label_column_width = 0
+        self._value_column_width = 0
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(2)
+        layout.setSpacing(4)
 
-        self.bars = []
-        self.vals = []
-        self.name_labels = []
-        names = ["Base", "Shoulder", "Elbow", "Wrist1", "Wrist2", "Wrist3"]
+        self.rows = []
+        joint_defs = [
+            ("J1", "Base"),
+            ("J2", "Shoulder"),
+            ("J3", "Elbow"),
+            ("J4", "Wrist 1"),
+            ("J5", "Wrist 2"),
+            ("J6", "Wrist 3"),
+        ]
 
-        for name in names:
-            row = QHBoxLayout()
-            row.setSpacing(8)
+        self.legend_neg = QLabel("-360°")
+        self.legend_zero = QLabel("0°")
+        self.legend_pos = QLabel("+360°")
 
-            lbl = QLabel(name)
-            lbl.setFixedWidth(55)
-            self.name_labels.append(lbl)
+        self.legend_left_spacer = QWidget()
+        self.legend_right_spacer = QWidget()
 
-            bar = QProgressBar()
-            bar.setRange(0, 720)  # 使用0-720范围，避免负数问题
-            bar.setFixedHeight(4)
-            bar.setTextVisible(False)
+        self.legend_track_layout = QGridLayout()
+        self.legend_track_layout.setContentsMargins(0, 0, 0, 0)
+        self.legend_track_layout.setHorizontalSpacing(0)
+        self.legend_track_layout.setVerticalSpacing(0)
+        self.legend_track_layout.addWidget(self.legend_neg, 0, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.legend_track_layout.addWidget(self.legend_zero, 0, 1, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.legend_track_layout.addWidget(self.legend_pos, 0, 2, alignment=Qt.AlignmentFlag.AlignRight)
+        self.legend_track_layout.setColumnStretch(0, 1)
+        self.legend_track_layout.setColumnStretch(1, 1)
+        self.legend_track_layout.setColumnStretch(2, 1)
 
-            val = QLabel("0°")
-            val.setFixedWidth(40)
-            val.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.legend_track = QWidget()
+        self.legend_track.setLayout(self.legend_track_layout)
 
-            row.addWidget(lbl)
-            row.addWidget(bar)
-            row.addWidget(val)
-            layout.addLayout(row)
+        self.legend_layout = QHBoxLayout()
+        self.legend_layout.setContentsMargins(0, 0, 0, 0)
+        self.legend_layout.setSpacing(0)
+        self.legend_layout.addWidget(self.legend_left_spacer)
+        self.legend_layout.addWidget(self.legend_track, 1)
+        self.legend_layout.addWidget(self.legend_right_spacer)
+        layout.addLayout(self.legend_layout)
 
-            self.bars.append(bar)
-            self.vals.append(val)
+        for joint_id, name in joint_defs:
+            row = JointRow(joint_id, name)
+            self.rows.append(row)
+            layout.addWidget(row)
 
         # 应用主题
         self.apply_theme()
+        self._sync_column_widths()
 
     def apply_theme(self):
         """应用主题样式"""
         t = theme.current_tokens()
-        for lbl in self.name_labels:
-            lbl.setStyleSheet(f"color: {t['text_muted']}; font-size: 8.5pt;")
-        for val in self.vals:
-            val.setStyleSheet(f"color: {t['text']}; font-family: Consolas; font-size: 8.5pt;")
-        for bar in self.bars:
-            bar.setStyleSheet(get_joint_bar_style(t, t['success']))
+        legend_style = f"color: {t['text_dim']}; font-size: 7pt;"
+        self.legend_neg.setStyleSheet(legend_style)
+        self.legend_pos.setStyleSheet(legend_style)
+        self.legend_zero.setStyleSheet(f"color: {t['accent_blue']}; font-size: 7pt; font-weight: 600;")
+        for row in self.rows:
+            row.apply_theme()
+        self._sync_column_widths()
 
     def update_data(self, joints):
         """更新关节数据 (joints为弧度)"""
         if not joints:
+            self.clear_data()
             return
-        t = theme.current_tokens()
-        for i, rad in enumerate(joints[:6]):
-            deg = rad * 57.2958  # 转换为度
-            # 将-360~360映射到0~720
-            bar_value = int(deg + 360)
-            bar_value = max(0, min(720, bar_value))  # 限制范围
-            self.bars[i].setValue(bar_value)
-            self.vals[i].setText(f"{deg:.1f}°")
+        for index, row in enumerate(self.rows):
+            if index < len(joints):
+                row.set_angle(math.degrees(joints[index]))
+            else:
+                row.set_angle(None)
+        self._sync_column_widths()
 
-            # 颜色逻辑
-            adeg = abs(deg)
-            color = t["success"]  # Green
-            if adeg > 175:
-                color = t["warning"]  # Orange
-            if adeg > 350:
-                color = t["danger"]  # Red
-            self.bars[i].setStyleSheet(get_joint_bar_style(t, color))
+    def clear_data(self):
+        """清空关节实时数据。"""
+        for row in self.rows:
+            row.set_angle(None)
+        self._sync_column_widths()
+
+    def _measure_text_width(self, label, text):
+        """按当前字体计算文本宽度。"""
+        metrics = label.fontMetrics()
+        return max(1, metrics.horizontalAdvance(text))
+
+    def _sync_column_widths(self):
+        """根据当前内容自适应左右列宽度，并同步顶部刻度对齐。"""
+        if not self.rows:
+            return
+
+        label_width = max(self._measure_text_width(row.lbl_joint_id, row.joint_id) for row in self.rows)
+        value_width = max(
+            self._measure_text_width(row.lbl_value, row.lbl_value.text() or "--")
+            for row in self.rows
+        )
+
+        self._label_column_width = label_width
+        self._value_column_width = value_width
+
+        for row in self.rows:
+            row.set_label_width(label_width)
+            row.set_value_width(value_width)
+
+        self.legend_left_spacer.setFixedWidth(label_width + JointRow.ROW_SPACING)
+        self.legend_right_spacer.setFixedWidth(value_width + JointRow.ROW_SPACING)
 
 
 class TCPPoseContent(QWidget):
@@ -858,6 +1389,7 @@ class TCPOffsetContent(QWidget):
 class StatusWidget(QWidget):
     """状态监控组件 - 工业简洁风格，支持拖拽排序"""
     panels_reordered = pyqtSignal(list)
+    base_move_requested = pyqtSignal(float, float, float)
     COMPACT_MINIMUM_WIDTH = 208
 
     # 面板定义: (state_key, 显示名称, 默认是否显示)
@@ -865,9 +1397,9 @@ class StatusWidget(QWidget):
         ("print_stats", "打印统计", True),
         ("temperature", "温度监控", True),
         ("print_params", "打印参数", True),
-        ("motion", "运动状态", True),
         ("joints", "关节角度", True),
         ("tcp_pose", "TCP 位姿(Base)", True),
+        ("base_move", "Base 点动", True),
         ("tcp_offset", "TCP 偏移", True),
     ]
 
@@ -939,26 +1471,30 @@ class StatusWidget(QWidget):
         self.panel.add_section(self.sec_params)
         self._sections["print_params"] = self.sec_params
 
-        # 4. 运动状态
         self.motion = MotionContent()
-        self.sec_motion = CollapsibleBox("运动状态", state_key="motion")
-        self.sec_motion.add_widget(self.motion)
-        self.panel.add_section(self.sec_motion)
-        self._sections["motion"] = self.sec_motion
 
-        # 5. 关节角度
+        # 4. 关节角度
         self.joints = JointsContent()
         self.sec_joints = CollapsibleBox("关节角度", state_key="joints")
         self.sec_joints.add_widget(self.joints)
         self.panel.add_section(self.sec_joints)
         self._sections["joints"] = self.sec_joints
 
-        # 6. TCP位姿
+        # 5. TCP位姿
         self.tcp_pose = TCPPoseContent()
         self.sec_tcp = CollapsibleBox("TCP 位姿(Base)", state_key="tcp_pose")
+        self.sec_tcp.set_header_meta("--.- mm/s")
         self.sec_tcp.add_widget(self.tcp_pose)
         self.panel.add_section(self.sec_tcp)
         self._sections["tcp_pose"] = self.sec_tcp
+
+        # 6. Base 点动
+        self.base_move = BaseMoveContent()
+        self.base_move.move_requested.connect(self.base_move_requested.emit)
+        self.sec_base_move = CollapsibleBox("Base 点动", state_key="base_move")
+        self.sec_base_move.add_widget(self.base_move)
+        self.panel.add_section(self.sec_base_move)
+        self._sections["base_move"] = self.sec_base_move
 
         # 7. TCP偏移 (默认折叠)
         self.tcp_offset = TCPOffsetContent()
@@ -1071,6 +1607,7 @@ class StatusWidget(QWidget):
     def update_velocity(self, velocity):
         """更新TCP速度"""
         self.motion.update_data(velocity)
+        self._set_tcp_speed_header(velocity)
 
     def update_joints(self, joints):
         """更新关节角度"""
@@ -1087,7 +1624,9 @@ class StatusWidget(QWidget):
     def update_tcp_speed(self, speed):
         """更新TCP速度 (兼容main_window接口, speed单位m/s)"""
         # 转换为 mm/s
-        self.motion.update_data(speed * 1000.0)
+        velocity_mm_s = speed * 1000.0
+        self.motion.update_data(velocity_mm_s)
+        self._set_tcp_speed_header(velocity_mm_s)
 
     def set_connection_status(self, is_connected, config_name=""):
         """设置连接状态 (兼容main_window接口)"""
@@ -1099,14 +1638,15 @@ class StatusWidget(QWidget):
         # 当前UI没有专门的运动状态文字显示，可以在未来添加
         pass
 
+    def set_base_move_availability(self, enabled, *, busy=False, reason=""):
+        """设置 Base 点动卡片的交互状态。"""
+        self.base_move.set_interaction_state(enabled, busy=busy, reason=reason)
+
     def clear_live_data(self):
         """清空实时监控数据，避免断线后保留陈旧值。"""
         self.motion.update_data(0.0)
-
-        for val in self.joints.vals:
-            val.setText("--")
-        for bar in self.joints.bars:
-            bar.setValue(360)
+        self._set_tcp_speed_header(None)
+        self.joints.clear_data()
 
         for i, val in enumerate(self.tcp_pose.labels):
             val.setText("--")
@@ -1138,11 +1678,19 @@ class StatusWidget(QWidget):
         # 更新所有内容组件样式
         content_widgets = [
             self.print_stats, self.temperature, self.print_params,
-            self.motion, self.joints, self.tcp_pose, self.tcp_offset
+            self.motion, self.joints, self.tcp_pose, self.base_move, self.tcp_offset
         ]
         for widget in content_widgets:
             if hasattr(widget, 'apply_theme'):
                 widget.apply_theme()
+
+    def _set_tcp_speed_header(self, velocity_mm_s):
+        """将 TCP 速度以紧凑方式显示在 TCP 位姿标题栏右侧。"""
+        if velocity_mm_s is None:
+            self.sec_tcp.set_header_meta("--.- mm/s")
+            return
+
+        self.sec_tcp.set_header_meta(f"{velocity_mm_s:.1f} mm/s")
 
     def start_print_timer(self, start_seconds=0):
         """开始打印计时器 (兼容main_window接口)"""

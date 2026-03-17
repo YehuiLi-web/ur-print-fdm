@@ -81,6 +81,7 @@ class IconManager:
         'search': 'icons/search.svg',
         'home': 'icons/home.svg',
         'calculator': 'icons/calculator.svg',
+        'script_estimate': 'icons/script_estimate.svg',
         'library': 'icons/library.svg',
         'target': 'icons/target.svg',
         'settings': 'icons/settings.svg',

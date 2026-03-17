@@ -28,16 +28,14 @@
     - 🟢 绿色: **正常控制 (读写)**
     - 🔴 红色: **只读模式 (被示教器占用)**
 
-### 3. 文件操作模块 (Files)
-- **保存按钮 (`self.btn_save`)**: 关联 `save_current_script()`。
-
-### 4. 生产控制模块 (Control) - 视觉中心
+### 3. 生产控制模块 (Control) - 视觉中心
 这部分按钮的状态（启用/禁用）会随 LED 状态灯同步切换。
+- **保存入口**: 不再常驻工具栏，改为通过菜单“文件 -> 保存”或 `Ctrl+S` 触发，避免打断运行控制区的视觉分组。
 - **运行按钮 (`self.btn_global_run`)**: 绿色。只在“连接正常”时可用。
 - **暂停按钮 (`self.btn_global_pause`)**: 橙色。支持“暂停/继续”状态切换，逻辑由 `_on_pause_clicked` 驱动。
 - **停止按钮 (`self.btn_global_stop`)**: 红色。紧急终止机器人运动。
 
-### 5. 辅助区 (Auxiliary)
+### 4. 辅助区 (Auxiliary)
 - **修复连接按钮 (`self.btn_repair_connection`)**:
   - **图标**: 使用 `assets/icons/reconnect.svg`。
   - **逻辑**: 调用 `trigger_connection_repair()`，执行一次完整修复（重新建立监控、Dashboard、控制通道）。
@@ -47,5 +45,5 @@
 
 ## ⚙️ 逻辑维护
 - **状态联动**: 工具栏状态现在统一由 `_apply_connection_snapshot()` 驱动。
-- **视觉微调**: 工具栏的边距和间距在 `_init_toolbar` 的 `toolbar.setStyleSheet` 中设置。
+- **视觉微调**: 工具栏的边距和间距在 `_init_toolbar` 的 `toolbar.setStyleSheet` 中设置；运行区内部使用独立容器做紧凑分组，避免按钮块被次要动作打断。
 - **SVG 图标**: 重连图标位于 `assets/icons/reconnect.svg`，如需更换图标，只需替换文件并保持文件名一致。

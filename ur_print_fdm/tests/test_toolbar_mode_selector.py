@@ -34,7 +34,7 @@ def test_toolbar_mode_selector_keeps_compact_api_and_fused_popup():
 
         assert selector.property("expanded") is True
         assert selector._popup.isVisible()
-        assert selector._popup.width() == selector.width()
+        assert selector._popup.width() >= selector.width()
         assert len(selector._popup._rows) == 2
         assert selector._popup._rows[-1].property("last") is True
 

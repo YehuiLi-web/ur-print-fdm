@@ -1,6 +1,6 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMenu
-from PyQt6.QtGui import QColor, QFont, QAction
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent
+from PyQt6.QtWidgets import QMenu, QToolTip
+from PyQt6.QtGui import QAction, QColor, QFont, QFontMetrics
+from PyQt6.QtCore import QEvent, Qt
 from ur_print_fdm.ui.resources.icon_manager import IconManager
 from ur_print_fdm.ui import theme
 from ur_print_fdm.ui.mixins.theme_aware import ThemeAwareMixin
@@ -14,13 +14,26 @@ except ImportError:
     QsciAPIs = None
 
 from .dialogs import FindReplaceDialog
-from .urscript_lexer import URScriptLexer, ALL_URSCRIPT_COMMANDS, get_urscript_completions
+from .urscript_lexer import URScriptLexer
+from .urscript_metadata import (
+    find_call_context,
+    format_call_tip,
+    format_symbol_help,
+    get_urscript_completions,
+    identifier_at_offset,
+    line_index_to_offset,
+)
 
 class CodeEditor(QsciScintilla, ThemeAwareMixin):
     """
     经过彻底修复和优化的专业 URScript 编辑器内核。
     基于 QScintilla，专为处理大型 3D 打印脚本设计。
     """
+
+    LINE_NUMBER_MIN_DIGITS = 2
+    LINE_NUMBER_MARGIN_PADDING = 8
+    FOLD_MARGIN_INDEX = 2
+    FOLD_MARGIN_WIDTH = 10
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -29,6 +42,8 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
         self._find_dialog = None
         self._find_replace_dialog = None
         self._scrollbar_visible = False  # 滚动条悬停状态
+        self._hovered_symbol = None
+        self._last_call_tip = ""
         self.setup_editor()
         self.apply_theme()
         # 安装事件过滤器以检测鼠标悬停
@@ -149,14 +164,16 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
         # --- 4. 侧边栏 (行号与折叠) ---
         # 行号边距 (Margin 0)
         self.setMarginType(0, QsciScintilla.MarginType.NumberMargin)
-        self.setMarginWidth(0, "  000  ")  # 预留足够宽度 + 两侧padding
         self.setMarginLineNumbers(0, True)
 
         # 折叠边距 - 使用简洁样式
-        self.setFolding(QsciScintilla.FoldStyle.PlainFoldStyle)
+        self.setFolding(QsciScintilla.FoldStyle.PlainFoldStyle, self.FOLD_MARGIN_INDEX)
+        self.setMarginWidth(self.FOLD_MARGIN_INDEX, self.FOLD_MARGIN_WIDTH)
 
         # 设置行号样式
         self.setMarginsFont(font)  # 使用相同字体
+        self.textChanged.connect(self._update_margin_width)
+        self._update_margin_width()
 
         # --- 5. 自动补全配置 ---
         self.setAutoCompletionThreshold(2)
@@ -175,6 +192,7 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
 
         # --- 8. 点击行号选中整行 ---
         self.setMarginSensitivity(0, True)
+        self.setMarginSensitivity(self.FOLD_MARGIN_INDEX, True)
         self.marginClicked.connect(self._on_margin_clicked)
 
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -247,6 +265,10 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
             "operator": t.get("syntax_operator", t["text_muted"]),
             "identifier": t["text"],
             "force": t.get("syntax_force", "#FF8C00"),  # 力控指令
+            "runtime": t.get("syntax_function", t.get("syntax_io", "#DCDCAA")),
+            "container": t.get("syntax_type", "#4EC9B0"),
+            "definition": t.get("syntax_function", t.get("syntax_motion", "#DCDCAA")),
+            "label": t.get("syntax_comment", t["text_muted"]),
         }
 
         # 为 URScript lexer 设置颜色
@@ -269,6 +291,10 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
                 URScriptLexer.Operator: QColor(syntax["operator"]),
                 URScriptLexer.Identifier: QColor(syntax["identifier"]),
                 URScriptLexer.ForceCommand: QColor(syntax["force"]),
+                URScriptLexer.RuntimeCommand: QColor(syntax["runtime"]),
+                URScriptLexer.ContainerFunction: QColor(syntax["container"]),
+                URScriptLexer.DefinitionName: QColor(syntax["definition"]),
+                URScriptLexer.ProgramLabel: QColor(syntax["label"]),
             })
         else:
             # 后备方案：使用 Python lexer 的样式
@@ -316,7 +342,6 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
 
         # 折叠标记颜色 - 注意：Foreground是填充色，Background是边框色
         fold_symbol_color = QColor(t["text_muted"])  # 符号颜色（+/-）
-        fold_bg = QColor(t["bg_secondary"])  # 背景色
 
         # 设置折叠标记颜色 - 前景色是符号填充色，背景色是符号边框色
         self.setMarkerForegroundColor(fold_symbol_color, QsciScintilla.SC_MARKNUM_FOLDER)
@@ -345,6 +370,14 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
         self.setMatchedBraceBackgroundColor(QColor(t["bg_hover_strong"]))
         self.setMatchedBraceForegroundColor(QColor(t["accent_blue"]))
 
+        # Call tip
+        if hasattr(self, "setCallTipsBackgroundColor"):
+            self.setCallTipsBackgroundColor(QColor(t["bg_tertiary"]))
+        if hasattr(self, "setCallTipsForegroundColor"):
+            self.setCallTipsForegroundColor(QColor(t["text"]))
+        if hasattr(self, "setCallTipsHighlightColor"):
+            self.setCallTipsHighlightColor(QColor(t["accent_blue"]))
+
     def _on_margin_clicked(self, margin, line, modifiers):
         """点击行号边距时选中整行"""
         if margin == 0:  # 行号边距
@@ -365,15 +398,54 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
         menu.addAction("粘贴", self.paste)
         menu.exec(self.mapToGlobal(pos))
 
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        if not self._is_qsci:
+            return
+        self._update_hover_help(event.position().toPoint())
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if self._is_qsci:
+            self._refresh_signature_help()
+
+    def leaveEvent(self, event):
+        self._hovered_symbol = None
+        QToolTip.hideText()
+        super().leaveEvent(event)
+
+    def focusOutEvent(self, event):
+        self._hovered_symbol = None
+        self._cancel_call_tip()
+        QToolTip.hideText()
+        super().focusOutEvent(event)
+
     def keyPressEvent(self, event):
+        modifiers = event.modifiers()
+        is_ctrl = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+
         # Ctrl+H: 查找替换
-        if event.key() == Qt.Key.Key_H and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+        if event.key() == Qt.Key.Key_H and modifiers == Qt.KeyboardModifier.ControlModifier:
             self.show_find_replace_dialog()
+            return
         # Ctrl+F: 仅查找
-        elif event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+        if event.key() == Qt.Key.Key_F and modifiers == Qt.KeyboardModifier.ControlModifier:
             self.show_find_dialog()
-        else:
-            super().keyPressEvent(event)
+            return
+        # Ctrl+Space: 强制唤起补全
+        if is_ctrl and event.key() == Qt.Key.Key_Space:
+            self._trigger_completion()
+            return
+        if event.key() == Qt.Key.Key_Escape:
+            self._cancel_call_tip()
+            QToolTip.hideText()
+            return
+
+        refresh_help = self._should_refresh_signature_help(event)
+        super().keyPressEvent(event)
+
+        if refresh_help:
+            self._refresh_signature_help()
 
     def show_find_dialog(self):
         """显示查找对话框（仅查找，无替换功能）"""
@@ -416,10 +488,160 @@ class CodeEditor(QsciScintilla, ThemeAwareMixin):
         """根据行数动态调整行号边距宽度"""
         if not self._is_qsci:
             return
-        lines = self.lines()
-        # 计算需要的位数，至少2位 + 左右padding
-        digits = max(2, len(str(lines)))
-        self.setMarginWidth(0, " " + "0" * digits + " ")
+        digits = max(self.LINE_NUMBER_MIN_DIGITS, len(str(max(1, self.lines()))))
+        metrics = QFontMetrics(self.font())
+        width = metrics.horizontalAdvance("9" * digits) + self.LINE_NUMBER_MARGIN_PADDING
+        self.setMarginWidth(0, width)
 
     def setPlaceholderText(self, text):
         pass
+
+    def _trigger_completion(self):
+        if not self._is_qsci:
+            return
+        for method_name in ("autoCompleteFromAPIs", "autoCompleteFromAll", "autoCompleteFromDocument"):
+            method = getattr(self, method_name, None)
+            if callable(method):
+                method()
+                return
+
+    def _should_refresh_signature_help(self, event) -> bool:
+        if not self._is_qsci:
+            return False
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            return False
+        if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+            return False
+
+        if event.text():
+            return True
+
+        return event.key() in {
+            Qt.Key.Key_Backspace,
+            Qt.Key.Key_Delete,
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+            Qt.Key.Key_Home,
+            Qt.Key.Key_End,
+            Qt.Key.Key_PageUp,
+            Qt.Key.Key_PageDown,
+        }
+
+    def _refresh_signature_help(self):
+        call_tip = self._build_call_tip_for_current_cursor()
+        if not call_tip:
+            self._cancel_call_tip()
+            return
+        if call_tip == self._last_call_tip and self._is_call_tip_active():
+            return
+        self._show_call_tip(call_tip)
+
+    def _build_call_tip_for_current_cursor(self) -> str:
+        if not self._is_qsci or not hasattr(self, "getCursorPosition"):
+            return ""
+
+        line, index = self.getCursorPosition()
+        text = self.text()
+        offset = line_index_to_offset(text, line, index)
+        context = find_call_context(text, offset)
+        if context is None:
+            return ""
+        return format_call_tip(context.name, context.arg_index)
+
+    def _update_hover_help(self, point):
+        symbol_name = self._symbol_at_point(point)
+        if symbol_name == self._hovered_symbol:
+            return
+
+        self._hovered_symbol = symbol_name
+        if not symbol_name:
+            QToolTip.hideText()
+            return
+
+        help_text = format_symbol_help(symbol_name)
+        if not help_text:
+            QToolTip.hideText()
+            return
+        QToolTip.showText(self.mapToGlobal(point), help_text, self)
+
+    def _symbol_at_point(self, point) -> str | None:
+        position = self._position_from_point(point)
+        if position is None:
+            return None
+
+        mapper = getattr(self, "lineIndexFromPosition", None)
+        if not callable(mapper):
+            return None
+
+        try:
+            line, index = mapper(position)
+        except Exception:
+            return None
+
+        text = self.text()
+        offset = line_index_to_offset(text, line, index)
+        word = identifier_at_offset(text, offset)
+        if word is None:
+            return None
+        if not format_symbol_help(word):
+            return None
+        return word
+
+    def _position_from_point(self, point) -> int | None:
+        if not self._is_qsci or not hasattr(self, "SendScintilla"):
+            return None
+
+        message = getattr(QsciScintilla, "SCI_POSITIONFROMPOINTCLOSE", None)
+        if message is None:
+            return None
+
+        try:
+            position = int(self.SendScintilla(message, int(point.x()), int(point.y())))
+        except Exception:
+            return None
+        return position if position >= 0 else None
+
+    def _show_call_tip(self, text: str):
+        self._last_call_tip = text
+
+        if self._is_qsci and hasattr(self, "SendScintilla"):
+            message_show = getattr(QsciScintilla, "SCI_CALLTIPSHOW", None)
+            message_pos = getattr(QsciScintilla, "SCI_GETCURRENTPOS", None)
+            message_cancel = getattr(QsciScintilla, "SCI_CALLTIPCANCEL", None)
+            if message_show is not None and message_pos is not None:
+                try:
+                    cursor_pos = int(self.SendScintilla(message_pos))
+                    if message_cancel is not None:
+                        self.SendScintilla(message_cancel)
+                    self.SendScintilla(message_show, cursor_pos, text.encode("utf-8"))
+                    return
+                except Exception:
+                    pass
+
+        QToolTip.showText(self.mapToGlobal(self.rect().center()), text, self)
+
+    def _cancel_call_tip(self):
+        if self._is_qsci and hasattr(self, "SendScintilla"):
+            message = getattr(QsciScintilla, "SCI_CALLTIPCANCEL", None)
+            if message is not None:
+                try:
+                    self.SendScintilla(message)
+                except Exception:
+                    pass
+        QToolTip.hideText()
+        self._last_call_tip = ""
+
+    def _is_call_tip_active(self) -> bool:
+        if not self._is_qsci or not hasattr(self, "SendScintilla"):
+            return bool(self._last_call_tip)
+
+        message = getattr(QsciScintilla, "SCI_CALLTIPACTIVE", None)
+        if message is None:
+            return bool(self._last_call_tip)
+
+        try:
+            return bool(self.SendScintilla(message))
+        except Exception:
+            return bool(self._last_call_tip)

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UR Print FDM Help Center</title>
+    <link rel="stylesheet" href="assets/help-center.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="sidebar__brand">
+          <p class="eyebrow">UR Print FDM</p>
+          <h1>帮助中心</h1>
+          <p class="sidebar__intro">软件说明与参考文档。</p>
+        </div>
+
+        <nav class="sidebar__nav">
+          <a href="#overview">总览</a>
+          <a href="#quick-start">快速开始</a>
+          <a href="#print-checklist">打印前检查清单</a>
+          <a href="#urscript">URScript 语法参考</a>
+          <a href="#process">工艺与轨迹</a>
+          <a href="#troubleshooting">故障排查</a>
+          <a href="#hardware">硬件与维护</a>
+          <a href="#development">开发与接口</a>
+          <a href="#local-notes">经验记录</a>
+        </nav>
+      </aside>
+
+      <main class="content">
+        <header class="hero">
+          <div class="hero__main">
+            <div class="hero__copy">
+              <h2>帮助中心</h2>
+              <p class="hero__lead">软件说明、打印前检查、故障排查与 URScript 语法参考。</p>
+            </div>
+
+            <div class="search-panel">
+              <label class="search-box" for="docSearch">
+                <span>搜索帮助内容</span>
+                <input
+                  id="docSearch"
+                  type="search"
+                  placeholder="输入关键词，例如：首层、TCP、堵头、线程、movel、pose_trans"
+                  autocomplete="off"
+                />
+              </label>
+              <div id="helpSearchResults" class="search-results" hidden></div>
+            </div>
+          </div>
+
+          <div class="hero__links">
+            <a class="quick-link" href="#print-checklist">先看打印前检查清单</a>
+            <a class="quick-link" href="urscript/index.html">打开 URScript 语法参考</a>
+            <a class="quick-link" href="#troubleshooting">遇到问题时看故障排查</a>
+            <a class="quick-link" href="#local-notes">查看经验记录</a>
+          </div>
+        </header>
+
+        <section id="overview" class="doc-section searchable" data-search="总览 帮助中心 软件说明 打印前检查 URScript 语法">
+          <div class="section-heading">
+            <h2>总览</h2>
+            <p>包含快速开始、打印前检查、工艺与轨迹、故障排查、硬件维护、开发接口和 URScript 语法参考。</p>
+          </div>
+        </section>
+
+        <section id="common-entry" class="doc-section searchable" data-search="常用入口 打印前检查 故障排查 URScript 经验记录">
+          <div class="section-heading">
+            <h2>常用入口</h2>
+            <p>按任务进入最常用的内容。</p>
+          </div>
+
+          <div class="entry-grid">
+            <a class="entry-card" href="#print-checklist">
+              <span class="badge">操作前</span>
+              <h3>打印前检查</h3>
+              <p>开始执行前逐项确认网络、TCP、首层和急停方案。</p>
+            </a>
+            <a class="entry-card" href="#troubleshooting">
+              <span class="badge">现场排查</span>
+              <h3>故障排查</h3>
+              <p>按现象快速缩小范围，先查最容易影响结果的几项。</p>
+            </a>
+            <a class="entry-card" href="urscript/index.html">
+              <span class="badge">语法参考</span>
+              <h3>URScript</h3>
+              <p>查语法结构、运动指令、位姿、线程、I/O 和示例脚本。</p>
+            </a>
+            <a class="entry-card" href="#local-notes">
+              <span class="badge">经验回看</span>
+              <h3>经验记录</h3>
+              <p>检索本机保存的现场经验和历史问题处理记录。</p>
+            </a>
+          </div>
+        </section>
+
+        <section id="quick-start" class="doc-section searchable" data-search="快速开始 环境搭建 连接 IP 上电顺序 G-code URScript">
+          <div class="section-heading">
+            <h2>快速开始</h2>
+            <p>第一次连机或现场换设备时，先按这个顺序过一遍。</p>
+          </div>
+
+          <ol class="step-list">
+            <li>确认电脑、UR 控制箱、挤出机控制器处于同一局域网。</li>
+            <li>机器人默认常见网段是 <code>192.168.137.x</code>，电脑 IP 需要落在同网段。</li>
+            <li>先启动机器人并进入遥控模式，再运行软件建立连接。</li>
+            <li>在资源管理器中打开 G-code 或 URScript 文件，必要时先做脚本转换。</li>
+            <li>连接成功后再开始上传、装载或执行，不要在未确认连接状态时直接发脚本。</li>
+          </ol>
+
+          <div class="callout callout--tip">
+            <strong>建议操作顺序</strong>
+            <p>打开文件 -> 检查 TCP/Feature -> 连接机器人 -> 做打印前检查 -> 再开始执行。</p>
+          </div>
+        </section>
+
+        <section id="print-checklist" class="doc-section searchable" data-search="打印前 检查清单 首层 TCP feature 遥控模式 转盘 电源 喷嘴">
+          <div class="section-heading">
+            <h2>打印前检查清单</h2>
+            <p>开始打印前请逐项确认。</p>
+          </div>
+
+          <div class="checklist">
+            <label><input type="checkbox" data-checklist-item="network" /> 机器人、电脑、外设已在同一网段，连接状态正常。</label>
+            <label><input type="checkbox" data-checklist-item="remote" /> 机器人已进入遥控模式，当前运行模式与现场流程一致。</label>
+            <label><input type="checkbox" data-checklist-item="tcp" /> TCP 与 Feature 已复核，变角度打印时确认是绕工具坐标原点旋转。</label>
+            <label><input type="checkbox" data-checklist-item="zheight" /> 首层高度已确认，避免过高不贴合或过低堆料。</label>
+            <label><input type="checkbox" data-checklist-item="extrusion" /> 喷嘴、白色导管、挤出通道和风扇状态已检查。</label>
+            <label><input type="checkbox" data-checklist-item="temperature" /> 温度、速度、线宽等工艺参数已按本次材料重新确认。</label>
+            <label><input type="checkbox" data-checklist-item="turntable" /> 使用转盘时，电源和同步方案已单独确认，不假设会严格按设定步长运行。</label>
+            <label><input type="checkbox" data-checklist-item="stopplan" /> 现场已确认停止策略和急停方案，出现异常能立即停机。</label>
+          </div>
+        </section>
+
+        <section id="urscript" class="doc-section searchable" data-search="URScript 语法 运动 指令 线程 位姿 I/O RPC 常见坑">
+          <div class="section-heading">
+            <h2>URScript 语法参考</h2>
+            <p>查阅语法结构、运动指令、位姿、线程、系统接口、示例和常见坑。</p>
+          </div>
+
+          <div class="doc-section doc-section--nested">
+            <div class="section-heading">
+              <h3>语法与结构</h3>
+              <p>语法结构、作用域、线程和常见错误。</p>
+            </div>
+            <div class="doc-link-grid">
+              __URSCRIPT_FOUNDATION_TRACK__
+            </div>
+          </div>
+
+          <div class="doc-section doc-section--nested">
+            <div class="section-heading">
+              <h3>运动与位姿</h3>
+              <p>运动指令、位姿表示和常用数学函数。</p>
+            </div>
+            <div class="doc-link-grid">
+              __URSCRIPT_MOTION_TRACK__
+            </div>
+          </div>
+
+          <div class="doc-section doc-section--nested">
+            <div class="section-heading">
+              <h3>运行时接口与示例</h3>
+              <p>系统函数、I/O、RPC 和示例脚本。</p>
+            </div>
+            <div class="doc-link-grid">
+              __URSCRIPT_RUNTIME_TRACK__
+            </div>
+          </div>
+
+          <p class="section-link-row">
+            <a class="quick-link" href="urscript/index.html">打开 URScript 语法参考</a>
+          </p>
+        </section>
+
+        <section id="process" class="doc-section searchable" data-search="工艺 轨迹 MoveJ MoveL MoveP pose_trans 首层 拖拽 角度">
+          <div class="section-heading">
+            <h2>工艺与轨迹</h2>
+            <p>汇总影响打印质量和运动结果的关键说明。</p>
+          </div>
+
+          <div class="grid grid--two">
+            <article class="info-card">
+              <h3>运动方式怎么选</h3>
+              <ul>
+                <li><code>movej</code> 适合起始位、回零位、空移切换。</li>
+                <li><code>movel</code> 适合短距离直线段和层间切换。</li>
+                <li><code>movep</code> 更适合连续打印轨迹，能利用混合半径让拐角更顺。</li>
+              </ul>
+            </article>
+            <article class="info-card">
+              <h3>TCP / Feature 的核心理解</h3>
+              <ul>
+                <li>Feature 是相对 Base 的坐标变换，不是单纯的“偏移量”。</li>
+                <li>喷头下拧以后，优先考虑抬高 Feature 的 Z，而不是盲改原轨迹。</li>
+                <li>相对移动本质上是相对当前参考系的偏移，参考坐标一变，落点会整体漂移。</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="callout callout--warning">
+            <strong>拖拽与首层问题通常不是单点故障</strong>
+            <p>优先联动检查首层高度、喷嘴姿态、线宽、温度、速度和冷却风扇，不要只盯一个参数。</p>
+          </div>
+        </section>
+
+        <section id="troubleshooting" class="doc-section searchable" data-search="故障 排查 堵头 出料困难 拖拽 地线 风扇 导管">
+          <div class="section-heading">
+            <h2>故障排查</h2>
+            <p>按照“表象 -> 优先检查项”的方式快速缩小问题范围。</p>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>现场表现</th>
+                  <th>优先检查</th>
+                  <th>建议动作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>线材拖拽、边缘拉丝明显</td>
+                  <td>首层高度、风扇、温度、速度、线宽</td>
+                  <td>先做首层高度复核，再配合风扇和速度调参。</td>
+                </tr>
+                <tr>
+                  <td>打印头不出料</td>
+                  <td>白色导管、喷嘴堵塞、加热状态、风扇</td>
+                  <td>先确认导管是否完全插入，再检查喷嘴和加热。</td>
+                </tr>
+                <tr>
+                  <td>出料一卡一卡</td>
+                  <td>地线接触、挤出齿轮阻力、堵头</td>
+                  <td>先复查地线和齿轮状态，再做堵头排查。</td>
+                </tr>
+                <tr>
+                  <td>转盘同步不稳定</td>
+                  <td>供电、同步方案、多线程策略</td>
+                  <td>不要默认按理论步长执行，先做单步验证。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="hardware" class="doc-section searchable" data-search="硬件 维护 Modbus 喷嘴 导管 挤出机 转盘">
+          <div class="section-heading">
+            <h2>硬件与维护</h2>
+            <p>常见机械端与外围设备检查项。</p>
+          </div>
+
+          <div class="grid grid--two">
+            <article class="info-card">
+              <h3>挤出侧</h3>
+              <ul>
+                <li>喷嘴通常需要加热后再安装或拆卸。</li>
+                <li>注意挤出机齿轮声音，异响通常意味着阻力异常或堵头。</li>
+                <li>手动挤压能出料而自动出料困难时，优先怀疑通道压迫或喷嘴尺寸不匹配。</li>
+              </ul>
+            </article>
+            <article class="info-card">
+              <h3>Modbus / 外设侧</h3>
+              <ul>
+                <li>现场修改寄存器逻辑时，先确认外设寄存器定义和方向含义。</li>
+                <li>转盘与加热共电源时，先确认供电稳定，再谈同步控制。</li>
+                <li>做外设联动前，先验证单机动作是否稳定，不要直接联机叠加复杂问题。</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="development" class="doc-section searchable" data-search="开发 接口 main_window driver toolbox docs architecture URScript parser runtime">
+          <div class="section-heading">
+            <h2>开发与接口</h2>
+            <p>项目结构、关键入口和相关文档索引。</p>
+          </div>
+
+          <div class="grid grid--two">
+            <article class="info-card">
+              <h3>关键入口</h3>
+              <ul>
+                <li><code>ur_print_fdm/ui/main_window.py</code>：主窗口、菜单、工具栏和主要编排入口。</li>
+                <li><code>ur_print_fdm/core/driver.py</code>：机器人连接、脚本发送和设备交互。</li>
+                <li><code>ur_print_fdm/ui/controllers/run_controller.py</code>：运行、停止和模式路由。</li>
+                <li><code>ur_print_fdm/config/manager.py</code>：配置读写入口。</li>
+              </ul>
+            </article>
+            <article class="info-card">
+              <h3>现有文档文件</h3>
+              <ul>
+                <li><code>docs/UR_Script_Execution_Guide.md</code>：URScript 执行语义与运行约束。</li>
+                <li><code>docs/architecture_health_analysis.md</code>：架构问题和修复脉络。</li>
+                <li><code>ur_print_fdm/docs/toolbar_guide.md</code>、<code>menu_bar_guide.md</code>：界面结构说明。</li>
+                <li><code>ur_print_fdm/help_center/content/urscript/*.md</code>：帮助中心使用的 URScript 语法源文档。</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="local-notes" class="doc-section searchable" data-search="经验记录 维护笔记 现场经验">
+          <div class="section-heading">
+            <h2>经验记录</h2>
+            <p>收录本机保存的经验记录，便于检索和回看。</p>
+          </div>
+
+          <div class="filter-bar">
+            __LOCAL_NOTE_FILTERS__
+          </div>
+
+          <div class="note-grid">
+            __LOCAL_NOTE_CARDS__
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+    <script src="assets/help-search-index.js"></script>
+    <script src="assets/help-center.js"></script>
+  </body>
+</html>

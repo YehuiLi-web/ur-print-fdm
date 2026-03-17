@@ -276,21 +276,83 @@ job_generated_plate()
     # ================= 平面标定算法 (移植自 single_arm_calibration_plane.py) =================
 
     @staticmethod
-    def fit_plane_feature(points_mm):
+    def _normalize_vector(vec, min_norm=1e-9):
+        norm = float(np.linalg.norm(vec))
+        if norm < min_norm:
+            return None
+        return vec / norm
+
+    @staticmethod
+    def _rotmat_to_axis_angle(R):
+        tr = float(np.trace(R))
+        theta = math.acos(max(-1.0, min(1.0, (tr - 1.0) / 2.0)))
+        if abs(theta) < 1e-9:
+            return 0.0, 0.0, 0.0
+
+        if abs(math.pi - theta) < 1e-6:
+            diag = np.diag(R)
+            axis = np.array([
+                math.sqrt(max(0.0, (diag[0] + 1.0) / 2.0)),
+                math.sqrt(max(0.0, (diag[1] + 1.0) / 2.0)),
+                math.sqrt(max(0.0, (diag[2] + 1.0) / 2.0)),
+            ])
+            if axis[0] > 1e-6:
+                axis[1] = math.copysign(axis[1], R[0, 1] + R[1, 0])
+                axis[2] = math.copysign(axis[2], R[0, 2] + R[2, 0])
+            elif axis[1] > 1e-6:
+                axis[2] = math.copysign(axis[2], R[1, 2] + R[2, 1])
+            elif axis[2] < 1e-6:
+                axis = np.array([0.0, 0.0, 1.0])
+
+            axis = URPrintLib._normalize_vector(axis)
+            if axis is None:
+                axis = np.array([0.0, 0.0, 1.0])
+            vec = axis * theta
+            return vec[0], vec[1], vec[2]
+
+        axis = np.array([
+            R[2, 1] - R[1, 2],
+            R[0, 2] - R[2, 0],
+            R[1, 0] - R[0, 1],
+        ]) / (2.0 * math.sin(theta))
+        axis = URPrintLib._normalize_vector(axis)
+        if axis is None:
+            return 0.0, 0.0, 0.0
+        vec = axis * theta
+        return vec[0], vec[1], vec[2]
+
+    @staticmethod
+    def fit_plane_feature(points_mm, origin_index=0, x_index=1, y_index=2):
         """
         输入: 点列表 [[x,y,z], ...] (单位 mm)
         输出: (feature_str, log_str)
         """
         P = np.asarray(points_mm, dtype=float)
+        if P.ndim != 2 or P.shape[1] != 3:
+            return None, "错误: 标定点格式应为 Nx3。"
         if P.shape[0] < 3:
             return None, "错误: 点数少于 3 个，无法拟合。"
+        if not np.all(np.isfinite(P)):
+            return None, "错误: 标定点包含无效数值。"
+
+        point_count = P.shape[0]
+        ref_indices = {"O": origin_index, "X": x_index, "Y": y_index}
+        for name, index in ref_indices.items():
+            if index < 0 or index >= point_count:
+                return None, f"错误: {name} 参考点索引超出范围。"
+        if len({origin_index, x_index, y_index}) < 3:
+            return None, "错误: O、X、Y 参考点必须互不相同。"
 
         # 1. 拟合平面 (SVD)
         centroid = P.mean(axis=0)
         Q = P - centroid
-        U, S, Vt = np.linalg.svd(Q, full_matrices=False)
-        normal = Vt[-1, :] # 法向量
-        normal = normal / np.linalg.norm(normal)
+        _, S, Vt = np.linalg.svd(Q, full_matrices=False)
+        if len(S) < 2 or S[0] < 1e-9 or (S[1] / max(S[0], 1e-9)) < 1e-3:
+            return None, "错误: 标定点近似共线，无法稳定拟合平面。"
+
+        normal = URPrintLib._normalize_vector(Vt[-1, :])  # 法向量
+        if normal is None:
+            return None, "错误: 无法计算平面法向量。"
 
         # 强制法向朝上 (+Z)
         if np.dot(normal, np.array([0.0, 0.0, 1.0])) < 0:
@@ -299,54 +361,49 @@ job_generated_plate()
         # 计算残差
         residuals = (P - centroid) @ normal
         mean_err = float(np.mean(np.abs(residuals)))
+        max_err = float(np.max(np.abs(residuals)))
 
         # 2. 构建坐标系 (O-X-Y)
-        # 假设前三个点分别是 O, X, Y
-        O = P[0]
-        X = P[1]
-        
-        # z_axis = 平面法向
-        z_axis = normal
-        
-        # x_axis = O->X 在平面上的投影
+        O = P[origin_index]
+        X = P[x_index]
+        Y = P[y_index]
+
         vx = X - O
-        vx = vx - np.dot(vx, z_axis) * z_axis
-        if np.linalg.norm(vx) < 1e-6:
+        vy = Y - O
+        x_hint = vx - np.dot(vx, normal) * normal
+        y_hint = vy - np.dot(vy, normal) * normal
+
+        x_axis = URPrintLib._normalize_vector(x_hint)
+        if x_axis is None:
             return None, "错误: O 点和 X 点重合或垂直于平面，无法确定 X 轴。"
-        x_axis = vx / np.linalg.norm(vx)
-        
-        # y_axis = z cross x
-        y_axis = np.cross(z_axis, x_axis)
-        y_axis = y_axis / np.linalg.norm(y_axis)
+
+        y_axis = y_hint - np.dot(y_hint, x_axis) * x_axis
+        y_axis = URPrintLib._normalize_vector(y_axis)
+        if y_axis is None:
+            return None, "错误: Y 参考点与 X 参考方向近似共线，无法确定 Y 轴。"
+
+        z_axis = URPrintLib._normalize_vector(np.cross(x_axis, y_axis))
+        if z_axis is None:
+            return None, "错误: 无法构建右手坐标系。"
+        if np.dot(z_axis, normal) < 0:
+            return None, "错误: Y 参考点位于负 Y 半轴，请按右手系重新选择。"
 
         # 3. 构建旋转矩阵 R
         R = np.column_stack((x_axis, y_axis, z_axis))
-        
-        # 转轴角 (rx, ry, rz)
-        def rotmat_to_axis_angle(R):
-            tr = np.trace(R)
-            theta = np.arccos(np.clip((tr - 1.0) / 2.0, -1.0, 1.0))
-            if abs(theta) < 1e-6: return 0.0, 0.0, 0.0
-            
-            k = 1.0 / (2.0 * np.sin(theta))
-            rx = (R[2, 1] - R[1, 2]) * k
-            ry = (R[0, 2] - R[2, 0]) * k
-            rz = (R[1, 0] - R[0, 1]) * k
-            
-            vec = np.array([rx, ry, rz])
-            vec = vec / np.linalg.norm(vec) * theta
-            return vec[0], vec[1], vec[2]
+        rx, ry, rz = URPrintLib._rotmat_to_axis_angle(R)
 
-        rx, ry, rz = rotmat_to_axis_angle(R)
-        
+        tilt_angle = math.degrees(math.acos(max(-1.0, min(1.0, np.dot(z_axis, [0, 0, 1])))))
+
         # 位置单位换算 mm -> m
         tx, ty, tz = O / 1000.0
-        
         feat_str = f"p[{tx:.6f}, {ty:.6f}, {tz:.6f}, {rx:.6f}, {ry:.6f}, {rz:.6f}]"
-        
+
         log_str = (f"拟合成功!\n"
                    f"点数: {len(P)}\n"
+                   f"参考点: O={origin_index+1}, X={x_index+1}, Y={y_index+1}\n"
                    f"平均残差: {mean_err:.4f} mm\n"
+                   f"最大残差: {max_err:.4f} mm\n"
+                   f"平面倾斜: {tilt_angle:.3f}°\n"
                    f"Feature: {feat_str}")
 
         return feat_str, log_str

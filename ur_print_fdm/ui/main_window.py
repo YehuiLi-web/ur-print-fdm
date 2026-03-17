@@ -27,6 +27,7 @@ from ur_print_fdm.shared.connection_state import (
     ConnectionSnapshot,
     SessionPhase,
 )
+from ur_print_fdm.shared.logging_context import new_trace_id
 from ur_print_fdm.shared.net import is_valid_ip
 
 # === 组件引入 (全部模块化) ===
@@ -35,6 +36,7 @@ from ur_print_fdm.ui.widgets.collapsible_status_dock import (
     StatusDockRestoreHandle,
     StatusWidget,
 )
+from ur_print_fdm.ui.widgets.about_dialog import AboutDialog
 from ur_print_fdm.ui.widgets.editor import DockableEditorWidget  # 新增dockable编辑器组件
 from ur_print_fdm.ui.widgets.fused_combo_box import FusedComboBox
 from ur_print_fdm.ui.widgets.toolbar_mode_selector import ToolbarModeSelector
@@ -44,6 +46,7 @@ from ur_print_fdm.ui.theme_manager import get_theme_manager  # 新的主题管�
 from ur_print_fdm.ui.controllers.queue_controller import QueueController
 from ur_print_fdm.ui.controllers.run_controller import RunController
 from ur_print_fdm.ui.controllers.tools_controller import ToolsController
+from ur_print_fdm.help_center.service import open_help_center
 from ur_print_fdm.ui.services.log_service import LogService
 from ur_print_fdm.ui.workers.threads import (
     ScriptSendThread,
@@ -52,6 +55,7 @@ from ur_print_fdm.ui.workers.threads import (
     ConnectionThread,
     ConnectionRepairThread,
     MonitorThread,
+    LinearMoveThread,
 )
 from ur_print_fdm.estimators.simple_gcode import SimpleGCodeTimeEstimator
 from ur_print_fdm.plugins.registry import registry
@@ -60,6 +64,18 @@ from ur_print_fdm.ui.resources.icon_manager import IconManager
 class URPrintIDE(QMainWindow):
     STATUS_DOCK_DEFAULT_WIDTH = 236
     STATUS_DOCK_EDGE_HIT_WIDTH = 10
+    BASE_MOVE_SPEED_M_S = 0.05
+    BASE_MOVE_ACCEL_M_S2 = 0.2
+    TOOLBAR_STATUS_TEXTS = (
+        "未连接",
+        "连接中...",
+        "完全连接",
+        "生产就绪",
+        "控制就绪",
+        "仅监控",
+        "修复中...",
+        "连接异常",
+    )
     # Keep a deliberate second-stage drag after reaching the minimum width,
     # so the dock does not disappear from a light follow-through.
     STATUS_DOCK_COLLAPSE_DRAG_DISTANCE = 28
@@ -106,6 +122,7 @@ class URPrintIDE(QMainWindow):
         self.extrusion_stop_thread = None
         self.script_thread = None
         self.upload_thread = None
+        self.base_move_thread = None
         self._direct_mode_processor = None  # Direct mode processor (30002 port)
         self._direct_mode_stop_processor = None
         self._direct_program_active = False
@@ -179,6 +196,7 @@ class URPrintIDE(QMainWindow):
         # === 左侧文件资源管理器 Dock ===
         self.dock_project = QDockWidget("文件资源管理器", self)
         self.project_widget = FileExplorerWidget()
+        self.dock_project.setMinimumWidth(FileExplorerWidget.COMPACT_MINIMUM_WIDTH)
         self.project_widget.script_loaded.connect(self.on_script_loaded)
         self.project_widget.file_requested.connect(self.open_file_in_tab)  # 连接新信号
         self.project_widget.log_requested.connect(self.log)  # 连接日志信号
@@ -190,6 +208,7 @@ class URPrintIDE(QMainWindow):
         # === 右侧状态 Dock (使用新组件) ===
         self.dock_status = QDockWidget("状态监视", self)
         self.status_widget = StatusWidget() # 实例化
+        self.status_widget.base_move_requested.connect(self._on_base_move_requested)
         self.dock_status.setMinimumWidth(StatusWidget.COMPACT_MINIMUM_WIDTH)
         self.dock_status.setWidget(self.status_widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_status)
@@ -407,6 +426,7 @@ class URPrintIDE(QMainWindow):
             try:
                 if self.driver.get_runtime_state() == 1:
                     self._direct_program_active = False
+                    self.log("[直连模式] 检测到机器人已回到 STOPPED，直连任务结束。", "INFO")
                     self._apply_connection_snapshot(self.driver.get_connection_snapshot())
             except Exception:
                 pass
@@ -435,6 +455,141 @@ class URPrintIDE(QMainWindow):
             self.status_widget.clear_live_data()
         if hasattr(self, 'calib_widget') and self.calib_widget:
             self.calib_widget.manual_widget.lbl_tcp_pos.setText("未连接")
+
+    def _is_base_move_busy(self) -> bool:
+        return bool(self.base_move_thread is not None and self.base_move_thread.isRunning())
+
+    def _refresh_base_move_controls(self, snapshot: ConnectionSnapshot | None = None) -> None:
+        if not hasattr(self, "status_widget") or self.status_widget is None:
+            return
+
+        snap = snapshot or getattr(self, "_connection_snapshot", None)
+        busy = self._is_base_move_busy()
+        enabled = False
+        reason = ""
+
+        if busy:
+            reason = "Base 点动执行中..."
+        elif snap is None or not getattr(snap, "can_direct_control", False):
+            reason = "需要监控和控制通道都在线"
+        elif snap.is_busy:
+            reason = "连接状态变更中"
+        elif self._has_connection_locked_operation():
+            reason = "机器人任务进行中"
+        else:
+            enabled = True
+            reason = "Base 点动就绪"
+
+        self.status_widget.set_base_move_availability(enabled, busy=busy, reason=reason)
+
+    def _ensure_rtde_control_ready(self, *, repair_reason: str) -> bool:
+        alive, detail = self.driver.is_rtde_control_alive()
+        if alive:
+            return True
+
+        self.log(f"检测到 rtde_control 失效: {detail}", "WARN")
+        success = bool(self.repair_connection_blocking(reason=repair_reason))
+        snapshot = self.driver.get_connection_snapshot()
+        if success and snapshot.control == ChannelState.UP:
+            self.log("控制通道已恢复", "SUCCESS")
+            return True
+
+        StyledMessageBox.warning(
+            self,
+            "控制接口失效",
+            "Base 点动前未能恢复控制通道。\n\n"
+            "可能原因：\n"
+            "1. 示教器正在运行程序\n"
+            "2. 机器人处于保护停止状态\n"
+            "3. Dashboard 或监控链路未恢复\n\n"
+            "请确保示教器空闲后重试。",
+        )
+        return False
+
+    def _describe_base_move_delta(self, dx_m: float, dy_m: float, dz_m: float) -> str:
+        if abs(dx_m) > 1e-9:
+            return f"Base {'+' if dx_m > 0 else '-'}X"
+        if abs(dy_m) > 1e-9:
+            return f"Base {'+' if dy_m > 0 else '-'}Y"
+        if abs(dz_m) > 1e-9:
+            return f"Base {'+' if dz_m > 0 else '-'}Z"
+        return "Base 0"
+
+    def _on_base_move_requested(self, dx_m: float, dy_m: float, dz_m: float) -> None:
+        if self._is_base_move_busy():
+            self.log("Base 点动仍在执行，请稍候。", "WARN")
+            return
+
+        snapshot = getattr(self, "_connection_snapshot", self.driver.get_connection_snapshot())
+        if not snapshot.can_direct_control:
+            StyledMessageBox.warning(
+                self,
+                "Base 点动不可用",
+                "当前连接状态不支持 Base 点动。\n需要监控和控制通道都在线。",
+            )
+            return
+
+        if self._has_connection_locked_operation():
+            self.log("机器人任务进行中，暂不接受 Base 点动。", "WARN")
+            return
+
+        if not self._ensure_rtde_control_ready(
+            repair_reason="Base 点动需要恢复控制通道，正在执行完整连接修复..."
+        ):
+            self._refresh_base_move_controls(self.driver.get_connection_snapshot())
+            return
+
+        pose = self.driver.get_tcp_pose()
+        if pose is None and self._last_tcp_pose is not None:
+            pose = list(self._last_tcp_pose)
+        if pose is None or len(pose) < 6:
+            StyledMessageBox.warning(self, "Base 点动失败", "当前无法读取 TCP 位姿，请稍后重试。")
+            return
+
+        target = list(pose[:6])
+        target[0] += float(dx_m)
+        target[1] += float(dy_m)
+        target[2] += float(dz_m)
+
+        step_mm = (abs(dx_m) + abs(dy_m) + abs(dz_m)) * 1000.0
+        self.log(f"发送 {self._describe_base_move_delta(dx_m, dy_m, dz_m)} 点动 ({step_mm:.0f} mm)", "INFO")
+
+        thread = LinearMoveThread(
+            self.driver,
+            target,
+            speed=self.BASE_MOVE_SPEED_M_S,
+            acceleration=self.BASE_MOVE_ACCEL_M_S2,
+            asynchronous=False,
+            trace_id=new_trace_id(),
+        )
+        thread.result_signal.connect(self._on_base_move_result)
+        thread.finished.connect(self._on_base_move_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self.base_move_thread = thread
+        thread.start()
+        self._refresh_base_move_controls(snapshot)
+
+    def _on_base_move_result(self, success: bool, message: str, target_pose) -> None:
+        target = list(target_pose or [])
+        if success:
+            if len(target) >= 3:
+                self._last_tcp_pose = target
+                self.log(
+                    f"{message}: X {target[0] * 1000:.2f}  Y {target[1] * 1000:.2f}  Z {target[2] * 1000:.2f} mm",
+                    "SUCCESS",
+                )
+            else:
+                self.log(message, "SUCCESS")
+        else:
+            self.log(message, "WARN")
+
+    def _on_base_move_thread_finished(self) -> None:
+        self.base_move_thread = None
+        try:
+            snapshot = self.driver.probe_connection_snapshot(probe_dashboard=False)
+        except Exception:
+            snapshot = self.driver.get_connection_snapshot()
+        self._apply_connection_snapshot(snapshot)
     #
     def on_code_inserted(self, code):
         editor = self.get_current_editor()
@@ -641,7 +796,7 @@ class URPrintIDE(QMainWindow):
         act_flag.triggered.connect(self.tool_insert_flag)
         script_submenu.addAction(act_flag)
 
-        act_estimate = QAction("脚本估算...", self)
+        act_estimate = QAction(IconManager().get_action_icon('script_estimate'), "脚本估算...", self)
         act_estimate.setStatusTip("估算 URScript 的打印时间与线材长度")
         act_estimate.triggered.connect(self.tool_script_estimate)
         script_submenu.addAction(act_estimate)
@@ -676,15 +831,10 @@ class URPrintIDE(QMainWindow):
         # ============================================================
         help_menu = menubar.addMenu("帮助(&H)")
 
-        act_help = QAction(icon(SP.SP_DialogHelpButton), "说明文档(&D)...", self)
-        act_help.setStatusTip("查看软件说明文档")
-        act_help.triggered.connect(self.show_help_dialog)
-        help_menu.addAction(act_help)
-
-        act_notes = QAction(icon(SP.SP_FileDialogInfoView), "打印注意事项(&N)...", self)
-        act_notes.setStatusTip("查看与维护打印注意事项")
-        act_notes.triggered.connect(self.show_printing_notes_dialog)
-        help_menu.addAction(act_notes)
+        act_help_center = QAction(icon(SP.SP_DialogHelpButton), "帮助中心(&C)...", self)
+        act_help_center.setStatusTip("打开统一帮助中心（网页）")
+        act_help_center.triggered.connect(lambda _checked=False: self.show_help_center())
+        help_menu.addAction(act_help_center)
 
         help_menu.addSeparator()
 
@@ -695,21 +845,14 @@ class URPrintIDE(QMainWindow):
 
     def _show_about_dialog(self):
         """显示关于对话框"""
-        StyledMessageBox.about(
-            self,
-            "关于 UR5 Fiber Printer Studio",
-            "UR5 Fiber Printer Studio\n\n"
-            "Expert Edition v1.0\n\n"
-            "专为 UR5 机器人纤维增强 3D 打印工艺开发的集成环境\n\n"
-            "基于 PyQt6 + ur_rtde 构建"
-        )
+        AboutDialog(self).exec()
 
     def _init_toolbar(self):
         toolbar = QToolBar("主工具栏")
         toolbar.setIconSize(QSize(20, 20))
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
-        toolbar.setStyleSheet("QToolBar { spacing: 10px; padding: 6px 8px; border: none; }")
+        toolbar.setStyleSheet("QToolBar { spacing: 8px; padding: 6px 10px; border: none; }")
         self.addToolBar(toolbar)
 
         # 获取标准图标的辅助函数
@@ -725,8 +868,9 @@ class URPrintIDE(QMainWindow):
         toolbar.addWidget(lbl_ip)
 
         self.ip_combo = FusedComboBox(editable=True, variant="toolbar_combo")
-        self.ip_combo.setMinimumWidth(140)
-        self.ip_combo.setMaximumWidth(160)
+        self.ip_combo.setFixedWidth(140)
+        self.ip_combo.setControlHeight(32)
+        self.ip_combo.setPopupRowHeight(32)
         self.ip_combo.setMaxVisibleItems(10)
 
         ip_addresses = config_manager.get("robot.ip_addresses",
@@ -774,40 +918,35 @@ class URPrintIDE(QMainWindow):
         """)
 
         # 状态指示器容器，保证垂直居中
-        indicator_container = QWidget()
-        indicator_container.setStyleSheet("background: transparent;")
-        indicator_layout = QHBoxLayout(indicator_container)
-        indicator_layout.setContentsMargins(8, 0, 8, 0)
-        indicator_layout.setSpacing(4)
+        self.toolbarIndicatorGroup = QWidget()
+        self.toolbarIndicatorGroup.setObjectName("toolbarIndicatorGroup")
+        indicator_layout = QHBoxLayout(self.toolbarIndicatorGroup)
+        indicator_layout.setContentsMargins(4, 0, 4, 0)
+        indicator_layout.setSpacing(6)
         indicator_layout.addWidget(self.status_indicator, 0, Qt.AlignmentFlag.AlignVCenter)
         indicator_layout.addWidget(self.status_text_label, 0, Qt.AlignmentFlag.AlignVCenter)
-        toolbar.addWidget(indicator_container)
+        toolbar.addWidget(self.toolbarIndicatorGroup)
 
         # ============================================================
-        # 区域3: 脚本操作
+        # 区域3: 运行控制
         # ============================================================
-        # 保存按钮
-        self.btn_save = QPushButton("保存")
-        self.btn_save.setIcon(icon(SP.SP_DialogSaveButton))
-        self.btn_save.setToolTip("保存当前脚本 (Ctrl+S)")
-        # self.btn_save.setShortcut("Ctrl+S") # 移除重复的快捷键定义，避免 Ambiguous shortcut overload
-        self.btn_save.clicked.connect(self.save_current_script)
-        toolbar.addWidget(self.btn_save)
-
         toolbar.addSeparator()
 
-        # ============================================================
-        # 区域4: 运行控制
-        # ============================================================
         icon_mgr = IconManager()
         # Cache icons for stateful buttons (run/pause).
         self._icon_play = icon_mgr.get_svg_icon("play", (16, 16))
         self._icon_pause = icon_mgr.get_svg_icon("pause", (16, 16))
 
+        self.toolbarControlGroup = QWidget()
+        self.toolbarControlGroup.setObjectName("toolbarControlGroup")
+        control_layout = QHBoxLayout(self.toolbarControlGroup)
+        control_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.setSpacing(6)
+
         # 运行模式（UR5 CB3 推荐：生产模式= SFTP 上传 + Dashboard 加载 loader.urp）
         lbl_mode = QLabel("模式:")
         lbl_mode.setProperty("ui_role", "toolbar_label")
-        toolbar.addWidget(lbl_mode)
+        control_layout.addWidget(lbl_mode)
 
         self.run_mode_combo = ToolbarModeSelector()
         self.run_mode_combo.addItem("生产模式", "production")
@@ -815,7 +954,6 @@ class URPrintIDE(QMainWindow):
         self.run_mode_combo.setProperty("ui_variant", "mode_selector")
         self.run_mode_combo.setMinimumWidth(108)
         self.run_mode_combo.setMaximumWidth(128)
-        self.run_mode_combo.setMinimumHeight(32)
         self.run_mode_combo.setToolTip(
             "生产模式（推荐，CB3 最稳定）：\n"
             "• SFTP 上传脚本到机器人\n"
@@ -830,7 +968,8 @@ class URPrintIDE(QMainWindow):
         if default_idx >= 0:
             self.run_mode_combo.setCurrentIndex(default_idx)
         self.run_mode_combo.currentIndexChanged.connect(self._on_run_mode_changed)
-        toolbar.addWidget(self.run_mode_combo)
+        control_layout.addWidget(self.run_mode_combo)
+        control_layout.addSpacing(2)
 
         # 运行 / 暂停（合并按钮，自动切换）
         self.btn_play_pause = QPushButton("运行")
@@ -842,7 +981,7 @@ class URPrintIDE(QMainWindow):
         )
         self.btn_play_pause.clicked.connect(self._on_play_pause_clicked)
         self.btn_play_pause.setEnabled(False)
-        toolbar.addWidget(self.btn_play_pause)
+        control_layout.addWidget(self.btn_play_pause)
 
         # 停止按钮
         self.btn_global_stop = QPushButton("停止")
@@ -851,7 +990,7 @@ class URPrintIDE(QMainWindow):
         self.btn_global_stop.setToolTip("停止机械臂/当前程序\n不会关闭挤出输出")
         self.btn_global_stop.clicked.connect(self.stop_current_script)
         self.btn_global_stop.setEnabled(False)
-        toolbar.addWidget(self.btn_global_stop)
+        control_layout.addWidget(self.btn_global_stop)
 
         self.btn_extrusion_stop = QPushButton("停挤出")
         self.btn_extrusion_stop.setObjectName("btn-toolbar-ghost")
@@ -859,7 +998,8 @@ class URPrintIDE(QMainWindow):
         self.btn_extrusion_stop.setToolTip("仅关闭挤出输出\n不会停止机械臂运动")
         self.btn_extrusion_stop.clicked.connect(self.stop_extrusion)
         self.btn_extrusion_stop.setEnabled(False)
-        toolbar.addWidget(self.btn_extrusion_stop)
+        control_layout.addWidget(self.btn_extrusion_stop)
+        control_layout.addSpacing(2)
 
         # 上传按钮（独立功能：有时需要手动传文件到机器人端）
         self.btn_upload = QPushButton("上传")
@@ -871,7 +1011,8 @@ class URPrintIDE(QMainWindow):
         )
         self.btn_upload.clicked.connect(self.upload_files)
         self.btn_upload.setEnabled(True)
-        toolbar.addWidget(self.btn_upload)
+        control_layout.addWidget(self.btn_upload)
+        toolbar.addWidget(self.toolbarControlGroup)
 
         # ============================================================
         # 区域5: 辅助功能
@@ -894,8 +1035,62 @@ class URPrintIDE(QMainWindow):
 
         # 别名兼容
         self.btn_connect_action = self.btn_connect
-        self.btn_save_script = self.btn_save
+        self.btn_save = None
+        self.btn_save_script = None
         self.lbl_control_status = self.status_indicator
+        self._lock_toolbar_geometry()
+
+    def _fix_toolbar_button_geometry(self, button: QPushButton | None, labels: tuple[str, ...]) -> None:
+        if button is None:
+            return
+
+        original_text = button.text()
+        max_width = 0
+        max_height = 0
+
+        button.ensurePolished()
+        for label in labels:
+            button.setText(label)
+            hint = button.sizeHint()
+            max_width = max(max_width, hint.width())
+            max_height = max(max_height, hint.height())
+
+        button.setText(original_text)
+        fallback = button.sizeHint()
+        button.setFixedSize(
+            max(max_width, fallback.width(), 1),
+            max(max_height, fallback.height(), 1),
+        )
+        button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def _lock_toolbar_geometry(self) -> None:
+        if hasattr(self, "ip_combo") and self.ip_combo is not None:
+            self.ip_combo.setFixedWidth(140)
+            self.ip_combo.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        if hasattr(self, "run_mode_combo") and self.run_mode_combo is not None:
+            self.run_mode_combo.setFixedWidth(128)
+            self.run_mode_combo.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        self._fix_toolbar_button_geometry(getattr(self, "btn_connect", None), ("连接", "断开", "连接中", "修复中", "修复"))
+        self._fix_toolbar_button_geometry(getattr(self, "btn_play_pause", None), ("运行", "暂停"))
+        self._fix_toolbar_button_geometry(getattr(self, "btn_global_stop", None), ("停止",))
+        self._fix_toolbar_button_geometry(getattr(self, "btn_extrusion_stop", None), ("停挤出",))
+        self._fix_toolbar_button_geometry(getattr(self, "btn_upload", None), ("上传",))
+
+        if hasattr(self, "status_text_label") and self.status_text_label is not None:
+            metrics = self.status_text_label.fontMetrics()
+            label_width = max(metrics.horizontalAdvance(text) for text in self.TOOLBAR_STATUS_TEXTS) + 8
+            self.status_text_label.setFixedWidth(label_width)
+            self.status_text_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            self.status_text_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        for attr in ("toolbarIndicatorGroup", "toolbarControlGroup"):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.adjustSize()
+                widget.setFixedSize(widget.sizeHint())
+                widget.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
     def _channel_status_text(self, snapshot: ConnectionSnapshot) -> str:
         channel_names = {
@@ -1047,6 +1242,7 @@ class URPrintIDE(QMainWindow):
         # 联动状态监视面板的连接指示
         if hasattr(self, "status_widget") and self.status_widget:
             self.status_widget.set_connection_status(snapshot.can_monitor, config["name"])
+            self._refresh_base_move_controls(snapshot)
 
         # 脉冲动画效果（连接中/重连中时启用）
         if config.get("pulse", False):
@@ -1077,11 +1273,11 @@ class URPrintIDE(QMainWindow):
         }
 
         if snapshot.phase == SessionPhase.CONNECTING:
-            connect_text = "连接中..."
+            connect_text = "连接中"
         elif snapshot.phase == SessionPhase.REPAIRING:
-            connect_text = "修复中..."
+            connect_text = "修复中"
         elif snapshot.phase == SessionPhase.FAULTED:
-            connect_text = "修复连接"
+            connect_text = "修复"
         else:
             connect_text = "断开" if is_online else "连接"
 
@@ -1163,6 +1359,8 @@ class URPrintIDE(QMainWindow):
 
     def _has_connection_locked_operation(self) -> bool:
         if self._has_active_robot_task():
+            return True
+        if self.base_move_thread is not None and self.base_move_thread.isRunning():
             return True
         if self.stop_thread is not None and self.stop_thread.isRunning():
             return True
@@ -1772,48 +1970,23 @@ class URPrintIDE(QMainWindow):
                 except Exception:
                     pass
 
-            # Help dialog HTML (theme-aware)
-            if hasattr(self, "help_dialog") and self.help_dialog is not None:
-                try:
-                    self.help_dialog.apply_theme()
-                except Exception:
-                    pass
-
-            # Printing notes detail HTML (theme-aware)
-            if hasattr(self, "printing_notes_dialog") and self.printing_notes_dialog is not None:
-                try:
-                    self.printing_notes_dialog.apply_theme()
-                except Exception:
-                    pass
+            self._lock_toolbar_geometry()
 
         except Exception as e:
             logging.getLogger("ur_print_fdm").exception("Failed to refresh theme-dependent UI: %s", e)
 
+    def show_help_center(self, anchor: str | None = None):
+        """打开统一帮助中心网页。"""
+        if not open_help_center(anchor=anchor):
+            StyledMessageBox.warning(self, "帮助中心", "未能打开本地帮助中心页面，请检查帮助资源是否完整。")
+
     def show_help_dialog(self):
-        """??????"""
-        if not hasattr(self, 'help_dialog') or self.help_dialog is None:
-            from ur_print_fdm.ui.widgets.help_dialog import HelpDialog
-
-            self.help_dialog = HelpDialog(self)
-            self.help_dialog.setModal(False)
-            self.center_dialog_on_parent(self.help_dialog)
-
-        self.help_dialog.show()
-        self.help_dialog.raise_()
-        self.help_dialog.activateWindow()
+        """兼容旧入口：统一跳转到帮助中心。"""
+        self.show_help_center()
 
     def show_printing_notes_dialog(self):
-        """????????"""
-        if not hasattr(self, 'printing_notes_dialog') or self.printing_notes_dialog is None:
-            from ur_print_fdm.ui.widgets.printing_notes_dialog import PrintingNotesDialog
-
-            self.printing_notes_dialog = PrintingNotesDialog(self)
-            self.printing_notes_dialog.setModal(False)
-            self.center_dialog_on_parent(self.printing_notes_dialog)
-
-        self.printing_notes_dialog.show()
-        self.printing_notes_dialog.raise_()
-        self.printing_notes_dialog.activateWindow()
+        """兼容旧入口：统一跳转到帮助中心的经验库部分。"""
+        self.show_help_center(anchor="local-notes")
 
     def center_dialog_on_parent(self, dialog):
         """将对话框相对于主窗口居中"""
@@ -2163,7 +2336,10 @@ class URPrintIDE(QMainWindow):
             self.log(f"[直连模式] {message}", "SUCCESS")
         else:
             self._direct_program_active = False
-            self.log(f"[直连模式] {message}", "ERROR")
+            level = "ERROR"
+            if "脚本已发送，但未确认" in message or "直连模式已取消" in message:
+                level = "WARN"
+            self.log(f"[直连模式] {message}", level)
             self._reset_urscript_estimate_run()
 
     def on_direct_mode_script_sent(self, success: bool, message: str):

@@ -1,5 +1,6 @@
 import sys
 import types
+from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
 
@@ -28,6 +29,7 @@ class _FakeSFTPClient:
     def __init__(self, transport):
         self.transport = transport
         self.put_calls = []
+        self.uploaded_payloads = []
         self.closed = False
         type(self).instances.append(self)
 
@@ -37,6 +39,7 @@ class _FakeSFTPClient:
 
     def put(self, local_path, remote_path, callback=None):
         self.put_calls.append((local_path, remote_path))
+        self.uploaded_payloads.append((remote_path, Path(local_path).read_bytes()))
         if callback is not None:
             callback(5, 10)
             callback(10, 10)
@@ -151,3 +154,27 @@ def test_sftp_upload_thread_reports_dashboard_load_failure(monkeypatch, tmp_path
     assert "文件上传成功，但加载失败" in results[-1][1]
     assert "Dashboard 加载失败：/programs/loader.urp" in results[-1][1]
 
+
+def test_sftp_upload_thread_normalizes_crlf_before_upload(monkeypatch, tmp_path):
+    app = QApplication.instance() or QApplication([])
+    _install_fake_paramiko(monkeypatch)
+
+    local_file = tmp_path / "demo.script"
+    local_file.write_bytes(b'def demo():\r\n  textmsg("hi")\r\nend\r\n')
+
+    worker = threads.SFTPUploadThread(
+        "192.168.1.10",
+        str(local_file),
+        remote_dir="/programs",
+        remote_filename="demo.script",
+    )
+
+    results = []
+    worker.result_signal.connect(lambda success, message: results.append((success, message)))
+    worker.run()
+    app.processEvents()
+
+    assert results and results[-1][0] is True
+    uploaded = dict(_FakeSFTPClient.instances[0].uploaded_payloads)
+    assert uploaded["/programs/demo.script"] == b'def demo():\n  textmsg("hi")\nend\n'
+    assert b"\r" not in uploaded["/programs/demo.script"]

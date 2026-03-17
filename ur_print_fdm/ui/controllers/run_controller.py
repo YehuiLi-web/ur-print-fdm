@@ -63,8 +63,10 @@ class RunController:
         snapshot = snapshot_getter() if callable(snapshot_getter) else None
         if snapshot is not None:
             can_stop = bool(getattr(snapshot, "can_stop", False))
+            preserve_control = bool(getattr(snapshot, "can_direct_control", False))
         else:
             can_stop = bool(self._window.driver.is_connected())
+            preserve_control = not bool(self._window.driver.is_read_only())
 
         if not can_stop:
             self._window.log("未连接，无法发送停止指令。", "WARN")
@@ -75,8 +77,18 @@ class RunController:
                 self._window.log("停止指令正在执行中，请稍候...", "WARN")
             return False
 
+        with trace_context(trace_id):
+            if preserve_control:
+                self._window.log("[停止] 正在发送机械臂原生停止指令... (保留控制通道)")
+            else:
+                self._window.log("[停止] 正在发送机械臂停止指令...")
+
         self._window.btn_global_stop.setEnabled(False)
-        self._window.stop_thread = StopThread(self._window.driver, trace_id=trace_id)
+        self._window.stop_thread = StopThread(
+            self._window.driver,
+            preserve_control=preserve_control,
+            trace_id=trace_id,
+        )
         self._window.stop_thread.finished_signal.connect(self._window.on_stop_finished)
 
         self._window.stop_timeout_timer = QTimer()
@@ -312,6 +324,11 @@ class RunController:
         self._window.btn_play_pause.setEnabled(False)
 
         ip = self._window.driver.get_ip_address()
+        if not is_valid_ip(ip):
+            StyledMessageBox.warning(self._window, "连接错误", f"当前机器人 IP 无效：{ip}")
+            self._window.btn_play_pause.setEnabled(True)
+            return
+
         self._window._direct_mode_processor = DirectModeProcessor(ip, script_content, trace_id=trace_id)
         self._window._direct_mode_processor.set_action_run(script_content)
         self._window._direct_mode_processor.log_signal.connect(lambda msg: self._window.log(msg))
@@ -337,24 +354,18 @@ class RunController:
 
         active = self._get_active_production_processor()
         if active is not None and active.isRunning():
-            reply = StyledMessageBox.question(
-                self._window,
-                "停止生产",
-                "确认停止当前生产任务？\n将发送 Dashboard stop，不会自动关闭挤出输出。",
-            )
-            if reply == StyledMessageBox.Yes:
-                try:
-                    if hasattr(active, "stop"):
-                        active.stop()
-                    elif hasattr(active, "emergency_stop_action"):
-                        active.emergency_stop_action()
-                    self._reset_global_pause_button()
-                    self._reset_urscript_estimate_run()
-                    with trace_context(trace_id):
-                        self._window.log("[停止] 已请求停止机械臂/当前程序（生产模式）。", "WARN")
-                except Exception as e:
-                    with trace_context(trace_id):
-                        self._window.log(f"停止失败: {e}", "ERROR")
+            try:
+                if hasattr(active, "stop"):
+                    active.stop()
+                elif hasattr(active, "emergency_stop_action"):
+                    active.emergency_stop_action()
+                self._reset_global_pause_button()
+                self._reset_urscript_estimate_run()
+                with trace_context(trace_id):
+                    self._window.log("[停止] 已请求停止机械臂/当前程序（生产模式）。", "WARN")
+            except Exception as e:
+                with trace_context(trace_id):
+                    self._window.log(f"停止失败: {e}", "ERROR")
             return
 
         selected_mode = "production"

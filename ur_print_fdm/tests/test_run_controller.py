@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 from ur_print_fdm.shared.connection_state import ChannelState, ConnectionSnapshot, SessionPhase
 from ur_print_fdm.ui.controllers.run_controller import RunController
-from ur_print_fdm.ui.widgets.styled_message_box import StyledMessageBox
 
 
 class _Driver:
@@ -32,6 +31,12 @@ class _Driver:
 
     def get_connection_snapshot(self):
         return self._snapshot
+
+    def stop(self):
+        return True
+
+    def manual_stop(self):
+        return True
 
 
 class _RunModeCombo:
@@ -81,6 +86,12 @@ class _Window:
         return None
 
     def on_extrusion_stop_timeout(self):
+        return None
+
+    def on_stop_finished(self, _message: str):
+        return None
+
+    def on_stop_timeout(self):
         return None
 
 
@@ -180,9 +191,12 @@ def test_stop_current_script_active_production_prefers_normal_stop(monkeypatch):
         def emergency_stop_action(self):
             called["emergency"] += 1
 
+    def _unexpected_question(*_args):
+        raise AssertionError("stop_current_script should not ask for confirmation")
+
     monkeypatch.setattr(
         "ur_print_fdm.ui.controllers.run_controller.StyledMessageBox.question",
-        lambda *_args: StyledMessageBox.Yes,
+        _unexpected_question,
     )
 
     controller._get_active_production_processor = lambda: _Processor()
@@ -190,6 +204,125 @@ def test_stop_current_script_active_production_prefers_normal_stop(monkeypatch):
 
     assert called["stop"] == 1
     assert called["emergency"] == 0
+
+
+def test_stop_current_script_prefers_manual_stop_when_control_ready(monkeypatch):
+    snapshot = ConnectionSnapshot(
+        phase=SessionPhase.ONLINE_FULL,
+        ip="192.168.1.100",
+        receive=ChannelState.UP,
+        control=ChannelState.UP,
+        dashboard=ChannelState.UP,
+    )
+    window = _Window(mode="production", driver=_Driver(snapshot=snapshot))
+    controller = RunController(window)
+    called = {"started": 0, "preserve_control": None}
+
+    class _Signal:
+        def connect(self, _callback):
+            return None
+
+    class _Thread:
+        def __init__(self, driver, *, preserve_control=False, trace_id=None):
+            called["driver"] = driver
+            called["preserve_control"] = preserve_control
+            called["trace_id"] = trace_id
+            self.finished_signal = _Signal()
+            self.finished = _Signal()
+
+        def isRunning(self):
+            return False
+
+        def start(self):
+            called["started"] += 1
+
+        def deleteLater(self):
+            return None
+
+    class _Timer:
+        def setSingleShot(self, _value):
+            return None
+
+        def start(self, _ms):
+            called["timer_started"] = _ms
+
+        def stop(self):
+            return None
+
+    class _TimerSignal:
+        def connect(self, _callback):
+            return None
+
+    timer = _Timer()
+    timer.timeout = _TimerSignal()
+
+    monkeypatch.setattr("ur_print_fdm.ui.controllers.run_controller.StopThread", _Thread)
+    monkeypatch.setattr("ur_print_fdm.ui.controllers.run_controller.QTimer", lambda: timer)
+
+    controller.stop_current_script()
+
+    assert called["started"] == 1
+    assert called["preserve_control"] is True
+
+
+def test_stop_current_script_falls_back_to_strong_stop_when_control_unavailable(monkeypatch):
+    snapshot = ConnectionSnapshot(
+        phase=SessionPhase.ONLINE_DASHBOARD_ONLY,
+        ip="192.168.1.100",
+        receive=ChannelState.UP,
+        control=ChannelState.STALE,
+        dashboard=ChannelState.UP,
+        control_reason="loader 接管",
+    )
+    window = _Window(mode="production", driver=_Driver(snapshot=snapshot, read_only=True))
+    controller = RunController(window)
+    called = {"started": 0, "preserve_control": None}
+
+    class _Signal:
+        def connect(self, _callback):
+            return None
+
+    class _Thread:
+        def __init__(self, driver, *, preserve_control=False, trace_id=None):
+            called["driver"] = driver
+            called["preserve_control"] = preserve_control
+            called["trace_id"] = trace_id
+            self.finished_signal = _Signal()
+            self.finished = _Signal()
+
+        def isRunning(self):
+            return False
+
+        def start(self):
+            called["started"] += 1
+
+        def deleteLater(self):
+            return None
+
+    class _Timer:
+        def setSingleShot(self, _value):
+            return None
+
+        def start(self, _ms):
+            called["timer_started"] = _ms
+
+        def stop(self):
+            return None
+
+    class _TimerSignal:
+        def connect(self, _callback):
+            return None
+
+    timer = _Timer()
+    timer.timeout = _TimerSignal()
+
+    monkeypatch.setattr("ur_print_fdm.ui.controllers.run_controller.StopThread", _Thread)
+    monkeypatch.setattr("ur_print_fdm.ui.controllers.run_controller.QTimer", lambda: timer)
+
+    controller.stop_current_script()
+
+    assert called["started"] == 1
+    assert called["preserve_control"] is False
 
 
 def test_run_current_script_blocks_production_when_dashboard_is_unavailable(monkeypatch):
@@ -253,3 +386,34 @@ def test_run_current_script_allows_direct_mode_with_monitor_only_snapshot(monkey
     controller.run_current_script()
 
     assert started["count"] == 1
+
+
+def test_run_current_script_direct_mode_rejects_invalid_driver_ip(monkeypatch):
+    snapshot = ConnectionSnapshot(
+        phase=SessionPhase.ONLINE_MONITOR_ONLY,
+        ip="invalid-ip",
+        receive=ChannelState.UP,
+        control=ChannelState.STALE,
+        dashboard=ChannelState.DOWN,
+    )
+    window = _Window(mode="direct", driver=_Driver(ip="invalid-ip", snapshot=snapshot))
+    controller = RunController(window)
+    called = {"warning": 0, "enabled": []}
+
+    window.btn_play_pause = SimpleNamespace(setEnabled=lambda enabled: called["enabled"].append(bool(enabled)))
+
+    monkeypatch.setattr(
+        "ur_print_fdm.ui.controllers.run_controller.StyledMessageBox.warning",
+        lambda *_args: called.__setitem__("warning", called["warning"] + 1),
+    )
+
+    class _UnexpectedProcessor:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("DirectModeProcessor should not be constructed for invalid IP")
+
+    monkeypatch.setattr("ur_print_fdm.ui.controllers.run_controller.DirectModeProcessor", _UnexpectedProcessor)
+
+    controller.run_current_script()
+
+    assert called["warning"] == 1
+    assert called["enabled"][-2:] == [False, True]

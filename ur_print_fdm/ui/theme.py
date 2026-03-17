@@ -183,9 +183,15 @@ def _dark_theme_legacy(t: dict) -> str:
             padding: 2px;
         }}
         QToolBar::separator {{
-            background: {t["border_light"]};
-            width: 1px;
-            margin: 4px 6px;
+            background: transparent;
+            width: 2px;
+            border-left: 1px solid {t["border_light"]};
+            margin: 4px 3px 4px 5px;
+        }}
+        QWidget#toolbarIndicatorGroup,
+        QWidget#toolbarControlGroup {{
+            background-color: transparent;
+            border: none;
         }}
 
         QStatusBar {{
@@ -437,6 +443,9 @@ def _dark_theme_legacy(t: dict) -> str:
         QPushButton#btn-toolbar-ghost:disabled {{
             background-color: transparent;
             color: {t["btn_disabled_text"]};
+        }}
+        QPushButton#btn-toolbar-connect {{
+            padding: 5px 8px;
         }}
         QPushButton#btn-toolbar-connect:checked {{
             background-color: {t["danger_checked"]};

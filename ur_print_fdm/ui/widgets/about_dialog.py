@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ur_print_fdm import __version__
+from ur_print_fdm.release_info import load_latest_release_notes_body
 from ur_print_fdm.ui.resources.icon_manager import IconManager
 from ur_print_fdm.ui.theme_manager import get_theme_manager
 
@@ -31,7 +32,7 @@ class AboutDialog(QDialog):
         self.setObjectName("aboutDialog")
         self.setWindowTitle("关于 ur-print-fdm")
         self.setModal(True)
-        self.setFixedSize(660, 252)
+        self.setFixedSize(660, 392)
         self.setWindowIcon(IconManager.get_svg_icon("app_icon", size=(24, 24)))
 
         self._init_ui()
@@ -40,8 +41,9 @@ class AboutDialog(QDialog):
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(0)
+        layout.setSpacing(14)
         layout.addWidget(self._build_hero_card())
+        layout.addWidget(self._build_release_notes_card())
 
     def _build_hero_card(self) -> QFrame:
         card = QFrame()
@@ -101,6 +103,27 @@ class AboutDialog(QDialog):
 
         content_layout.addStretch()
         layout.addLayout(content_layout, 1)
+        return card
+
+    def _build_release_notes_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("aboutReleaseNotesCard")
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(8)
+
+        title = QLabel("本次版本说明")
+        title.setObjectName("aboutReleaseNotesTitle")
+        layout.addWidget(title)
+
+        note = QLabel(load_latest_release_notes_body())
+        note.setObjectName("aboutReleaseNotesBody")
+        note.setWordWrap(True)
+        note.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(note)
+
         return card
 
     @staticmethod
@@ -178,6 +201,25 @@ class AboutDialog(QDialog):
                 padding: 6px 12px;
                 font-size: 12px;
                 font-weight: 600;
+            }}
+            QFrame#aboutReleaseNotesCard {{
+                background-color: {t.get("bg_main", "#2b2b2b")};
+                border: 1px solid {t.get("border_light", "#46464a")};
+                border-radius: 16px;
+            }}
+            QLabel#aboutReleaseNotesTitle {{
+                color: {t.get("text", "#e0e0e0")};
+                font-size: 14px;
+                font-weight: 700;
+                border: none;
+                background: transparent;
+            }}
+            QLabel#aboutReleaseNotesBody {{
+                color: {t.get("text_muted", "#c0c0c0")};
+                font-size: 12px;
+                line-height: 1.45;
+                border: none;
+                background: transparent;
             }}
             """
         )

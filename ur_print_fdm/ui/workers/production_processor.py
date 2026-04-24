@@ -29,6 +29,7 @@ from ur_print_fdm.constants import DEFAULT_MODBUS_EXTRUDER
 from ur_print_fdm.core.dashboard_driver import SimpleDashboardDriver
 from ur_print_fdm.shared.logging_context import trace_context
 from ur_print_fdm.shared.net import is_valid_ip
+from ur_print_fdm.shared.upload_preprocessor import prepare_upload_source
 from ur_print_fdm.ui.workers.loader_binding import build_loader_binding_note
 
 
@@ -368,9 +369,14 @@ class ProductionProcessor(QThread):
 
             logger.info("SFTP upload: %s -> %s", filename, self.remote_dir)
             self._log(f"SFTP 上传: {filename} -> {self.remote_dir}")
-            sftp.put(local_path, remote_original, callback=_cb)
-            self.file_progress_signal.emit(0)
-            sftp.put(local_path, remote_loader, callback=_cb)
+
+            with prepare_upload_source(local_path) as upload_source:
+                if upload_source.normalized:
+                    logger.info("Normalized text upload newlines to LF before SFTP: %s", filename)
+
+                sftp.put(upload_source.path, remote_original, callback=_cb)
+                self.file_progress_signal.emit(0)
+                sftp.put(upload_source.path, remote_loader, callback=_cb)
 
             sftp.close()
             transport.close()

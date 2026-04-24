@@ -25,7 +25,9 @@ hiddenimports = [
     'ur_print_fdm.estimators',
     'ur_print_fdm.robots',
     # 第三方库可能需要的导入
-    'ur_rtde',
+    'rtde_control',
+    'rtde_receive',
+    'dashboard_client',
     'paramiko',
     'numpy',
 ]
@@ -40,6 +42,18 @@ datas = []
 icons_dir = os.path.join(ROOT, 'ur_print_fdm', 'ui', 'resources', 'icons')
 if os.path.exists(icons_dir):
     datas.append((icons_dir, os.path.join('ur_print_fdm', 'ui', 'resources', 'icons')))
+
+help_center_dir = os.path.join(ROOT, 'ur_print_fdm', 'help_center', 'site')
+if os.path.exists(help_center_dir):
+    datas.append((help_center_dir, os.path.join('ur_print_fdm', 'help_center', 'site')))
+
+help_center_content_dir = os.path.join(ROOT, 'ur_print_fdm', 'help_center', 'content')
+if os.path.exists(help_center_content_dir):
+    datas.append((help_center_content_dir, os.path.join('ur_print_fdm', 'help_center', 'content')))
+
+release_notes_dir = os.path.join(ROOT, 'ur_print_fdm', 'release_notes')
+if os.path.exists(release_notes_dir):
+    datas.append((release_notes_dir, os.path.join('ur_print_fdm', 'release_notes')))
 
 # URscript 目录
 urscript_dir = os.path.join(ROOT, 'URscript')

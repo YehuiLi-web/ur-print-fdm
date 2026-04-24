@@ -109,6 +109,29 @@ py -3.11 -m pytest -q
 .\build.bat
 ```
 
+脚本现在会先询问两项发布信息：
+
+- 本次版本号，默认沿用当前 `pyproject.toml` 中的版本
+- 本次版本说明，支持多行输入，单独输入 `.` 结束
+
+版本说明模板在 `release_notes/template.txt`：
+
+- 第一行直接输入 `.`，会直接套用模板
+- 第一行输入 `/template`，也会直接套用模板
+- 生成时会同步写入 `ur_print_fdm/release_notes/latest.txt`，供软件“关于”窗口显示
+
+填写完成后，构建脚本会自动同步版本号到以下位置：
+
+- `pyproject.toml`
+- `ur_print_fdm/__init__.py`
+- `installer.iss`
+
+同时会生成版本说明文件：
+
+- `release_notes/latest.txt`
+- `release_notes/<version>.txt`
+- `ur_print_fdm/release_notes/latest.txt`
+
 如果想先手动补齐打包依赖，也可以直接使用开发依赖清单：
 
 ```powershell
@@ -119,7 +142,9 @@ py -3.11 -m pip install -r requirements-dev.txt
 
 - 生成目录版 `dist/UR Print FDM/`
 - 生成绿色单文件版 `dist/UR Print FDM Portable.exe`
-- 如果检测到 Inno Setup 6，再生成安装版 `installer_output/UR_Print_FDM_Setup_0.1.0.exe`
+- 如果检测到 Inno Setup 6，再生成安装版 `installer_output/UR_Print_FDM_Setup_<version>.exe`
+- 安装版会显示本次 `release_notes/latest.txt`，并把它一并安装到目标目录里的 `Release Notes.txt`
+- 软件“关于”窗口会读取同一份版本说明，不需要再额外维护第二份文案
 
 ## 手工联调脚本
 

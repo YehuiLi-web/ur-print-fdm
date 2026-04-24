@@ -1,0 +1,134 @@
+[
+  {
+    "category": "shell",
+    "name": "main_window",
+    "description": "Main application shell with toolbar, docks, and editor",
+    "file": "shell_main_window.png"
+  },
+  {
+    "category": "navigation",
+    "name": "file_explorer",
+    "description": "Tree-based navigation and embedded header actions",
+    "file": "navigation_file_explorer.png"
+  },
+  {
+    "category": "panel",
+    "name": "status_widget",
+    "description": "Right-side monitoring panel with collapsible cards",
+    "file": "panel_status_widget.png"
+  },
+  {
+    "category": "workspace",
+    "name": "editor_workspace",
+    "description": "Dockable editor workspace and welcome/tab styling",
+    "file": "workspace_editor_workspace.png"
+  },
+  {
+    "category": "dialog",
+    "name": "find_replace",
+    "description": "Legacy editor utility dialog style",
+    "file": "dialog_find_replace.png"
+  },
+  {
+    "category": "form",
+    "name": "preferences_dialog",
+    "description": "Modern settings center with cards and inline fields",
+    "file": "form_preferences_dialog.png"
+  },
+  {
+    "category": "tool",
+    "name": "calibration_dialog",
+    "description": "Tabbed calibration workbench",
+    "file": "tool_calibration_dialog.png"
+  },
+  {
+    "category": "tool",
+    "name": "library_dialog",
+    "description": "Sample library and dynamic form area",
+    "file": "tool_library_dialog.png"
+  },
+  {
+    "category": "tool",
+    "name": "flow_calculator",
+    "description": "Single-purpose form calculator",
+    "file": "tool_flow_calculator.png"
+  },
+  {
+    "category": "tool",
+    "name": "sync_calculator",
+    "description": "Single-purpose sync calculator",
+    "file": "tool_sync_calculator.png"
+  },
+  {
+    "category": "content",
+    "name": "help_dialog",
+    "description": "Documentation reader layout",
+    "file": "content_help_dialog.png"
+  },
+  {
+    "category": "content",
+    "name": "printing_notes_dialog",
+    "description": "Knowledge-base list/detail workspace",
+    "file": "content_printing_notes_dialog.png"
+  },
+  {
+    "category": "dialog",
+    "name": "queue_dialog",
+    "description": "List-based production queue dialog",
+    "file": "dialog_queue_dialog.png"
+  },
+  {
+    "category": "dialog",
+    "name": "upload_options_dialog",
+    "description": "Modern choice-card modal dialog",
+    "file": "dialog_upload_options_dialog.png"
+  },
+  {
+    "category": "dialog",
+    "name": "styled_message_box",
+    "description": "Custom app message dialog",
+    "file": "dialog_styled_message_box.png"
+  },
+  {
+    "category": "dialog",
+    "name": "delete_confirmation",
+    "description": "Custom destructive confirmation dialog",
+    "file": "dialog_delete_confirmation.png"
+  },
+  {
+    "category": "dialog",
+    "name": "native_message_box",
+    "description": "Native QMessageBox style still used in legacy flows",
+    "file": "dialog_native_message_box.png"
+  },
+  {
+    "category": "dialog",
+    "name": "native_input_dialog",
+    "description": "Native QInputDialog style still used in legacy flows",
+    "file": "dialog_native_input_dialog.png"
+  },
+  {
+    "category": "dialog",
+    "name": "note_edit_dialog",
+    "description": "Form-heavy edit dialog",
+    "file": "dialog_note_edit_dialog.png"
+  },
+  {
+    "category": "controls",
+    "name": "text_inputs",
+    "description": "Text-entry control gallery",
+    "file": "controls_text_inputs.png"
+  },
+  {
+    "category": "controls",
+    "name": "numeric_inputs",
+    "description": "Numeric-entry control gallery",
+    "file": "controls_numeric_inputs.png"
+  },
+  {
+    "category": "controls",
+    "name": "buttons",
+    "description": "Button family gallery",
+    "file": "controls_buttons.png"
+  }
+]

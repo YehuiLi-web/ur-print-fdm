@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ur-print-fdm"
-version = "0.1.0"
+version = "0.1.1"
 description = "UR5 Fiber Printer Studio (Expert Edition)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,7 +43,14 @@ include = ["ur_print_fdm*"]
 exclude = ["ur_print_fdm.tests*", "__pycache__*", "说明文档资料*"]
 
 [tool.setuptools.package-data]
-ur_print_fdm = ["ui/resources/icons/*.svg"]
+ur_print_fdm = [
+  "ui/resources/icons/*.svg",
+  "help_center/content/urscript/*.md",
+  "help_center/site/*.html",
+  "help_center/site/assets/*.css",
+  "help_center/site/assets/*.js",
+  "release_notes/*.txt",
+]
 
 [tool.ruff]
 line-length = 100

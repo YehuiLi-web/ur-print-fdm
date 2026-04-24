@@ -1,7 +1,7 @@
 # UR Print FDM 架构健康度分析报告（rev-4）
 
 **复核日期**：2026年3月8日  
-**项目版本**：0.1.0 (`ur-print-fdm`)  
+**项目版本**：0.1.1 (`ur-print-fdm`)  
 **范围**：`ur_print_fdm/` 主包 + `ur_print_fdm/tests`
 
 ---

@@ -35,6 +35,8 @@ htmlcov/
 # Environment
 .env
 .venv
+.preview-venv/
+.pydeps/
 venv/
 ENV/
 env/
@@ -50,6 +52,7 @@ iscc.err
 
 # Temporary files
 *.tmp
+tmp_*/
 
 # Worktrees
 .worktrees/
@@ -59,3 +62,8 @@ iscc.err
 
 # Installer outputs
 installer_output/
+
+# Release notes generated during packaging
+release_notes/*
+!release_notes/template.txt
+ur_print_fdm/release_notes/*.txt

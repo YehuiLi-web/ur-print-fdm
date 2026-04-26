@@ -16,6 +16,16 @@ set "APP_VERSION="
 set "SETUP_EXE="
 set "INNO_PATH="
 set "VERSION_TMP=%TEMP%\ur_print_fdm_build_version.txt"
+set "BUILD_NON_INTERACTIVE=0"
+set "BUILD_PREPARE_ONLY=0"
+set "RELEASE_VERSION_ARG="
+set "RELEASE_NOTES_ARG="
+set "RELEASE_NOTES_FILE_ARG="
+set "BUILD_EXIT_AFTER_ARGS=0"
+
+call :parse_args %*
+if errorlevel 1 exit /b 1
+if "%BUILD_EXIT_AFTER_ARGS%"=="1" exit /b 0
 
 echo ============================================
 echo   UR Print FDM - 一键打包脚本
@@ -26,13 +36,13 @@ echo [1/5] 检查 Python 3.11 ...
 call :find_python
 if errorlevel 1 (
     echo [错误] 未找到 Python 3.11，请先安装后再执行打包。
-    pause
+    call :maybe_pause
     exit /b 1
 )
 "%PY_EXE%" %PY_ARGS% -c "import sys; print(sys.version)" >nul 2>&1
 if errorlevel 1 (
     echo [错误] Python 3.11 检查失败。
-    pause
+    call :maybe_pause
     exit /b 1
 )
 echo      Python 3.11 已就绪。
@@ -41,24 +51,30 @@ echo.
 echo [2/5] 设置版本号与版本说明 ...
 if not exist "%RELEASE_PREPARE_SCRIPT%" (
     echo [错误] 未找到发布准备脚本: %RELEASE_PREPARE_SCRIPT%
-    pause
+    call :maybe_pause
     exit /b 1
 )
-"%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%"
+call :prepare_release_metadata
 if errorlevel 1 (
     echo [错误] 版本信息准备失败！
-    pause
+    call :maybe_pause
     exit /b 1
 )
 call :load_version
 if errorlevel 1 (
     echo [错误] 无法读取更新后的版本号！
-    pause
+    call :maybe_pause
     exit /b 1
 )
 echo      本次构建版本: %APP_VERSION%
 echo      版本说明文件: %RELEASE_NOTES_FILE%
 echo.
+
+if "%BUILD_PREPARE_ONLY%"=="1" (
+    echo [提示] 已按 --prepare-only 仅准备版本信息，跳过打包。
+    call :maybe_pause
+    exit /b 0
+)
 
 echo [3/5] 检查并安装 PyInstaller ...
 "%PY_EXE%" %PY_ARGS% -m pip show pyinstaller >nul 2>&1
@@ -67,7 +83,7 @@ if errorlevel 1 (
     "%PY_EXE%" %PY_ARGS% -m pip install pyinstaller
     if errorlevel 1 (
         echo [错误] PyInstaller 安装失败！
-        pause
+        call :maybe_pause
         exit /b 1
     )
 )
@@ -79,7 +95,7 @@ echo      生成目录版 ...
 "%PY_EXE%" %PY_ARGS% -m PyInstaller --noconfirm --clean "%APP_SPEC%"
 if errorlevel 1 (
     echo [错误] 目录版打包失败！
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -87,7 +103,7 @@ echo      生成绿色单文件版 ...
 "%PY_EXE%" %PY_ARGS% -m PyInstaller --noconfirm --clean "%PORTABLE_SPEC%"
 if errorlevel 1 (
     echo [错误] 绿色单文件版打包失败！
-    pause
+    call :maybe_pause
     exit /b 1
 )
 echo      可执行文件构建完成。
@@ -109,7 +125,7 @@ if defined INNO_PATH (
     "%INNO_PATH%" /DMyAppVersion=%APP_VERSION% /DMyReleaseNotesFile=%RELEASE_NOTES_FILE% "%INSTALLER_SCRIPT%"
     if errorlevel 1 (
         echo [错误] Inno Setup 编译失败！
-        pause
+        call :maybe_pause
         exit /b 1
     )
     echo      安装程序已生成: %SETUP_EXE%
@@ -126,7 +142,149 @@ echo 绿色单文件版: %PORTABLE_EXE%
 echo 目录版入口:   %APP_DIR%\UR Print FDM.exe
 if exist "%SETUP_EXE%" echo 安装版:       %SETUP_EXE%
 echo.
-pause
+call :maybe_pause
+exit /b 0
+
+:parse_args
+if "%~1"=="" exit /b 0
+
+if /i "%~1"=="--help" goto :usage_success
+if /i "%~1"=="/?" goto :usage_success
+
+if /i "%~1"=="--non-interactive" (
+    set "BUILD_NON_INTERACTIVE=1"
+    shift
+    goto :parse_args
+)
+
+if /i "%~1"=="--prepare-only" (
+    set "BUILD_PREPARE_ONLY=1"
+    shift
+    goto :parse_args
+)
+
+if /i "%~1"=="--version" (
+    if "%~2"=="" (
+        echo [错误] --version 需要版本号参数。
+        goto :usage_error
+    )
+    set "RELEASE_VERSION_ARG=%~2"
+    shift
+    shift
+    goto :parse_args
+)
+
+if /i "%~1"=="--notes" (
+    if "%~2"=="" (
+        echo [错误] --notes 需要版本说明文本。
+        goto :usage_error
+    )
+    set "RELEASE_NOTES_ARG=%~2"
+    shift
+    shift
+    goto :parse_args
+)
+
+if /i "%~1"=="--notes-file" (
+    if "%~2"=="" (
+        echo [错误] --notes-file 需要文件路径参数。
+        goto :usage_error
+    )
+    set "RELEASE_NOTES_FILE_ARG=%~2"
+    shift
+    shift
+    goto :parse_args
+)
+
+echo [错误] 未识别的参数: %~1
+goto :usage_error
+
+:usage_success
+call :usage
+set "BUILD_EXIT_AFTER_ARGS=1"
+exit /b 0
+
+:usage_error
+call :usage
+call :maybe_pause
+exit /b 1
+
+:usage
+echo 用法:
+echo   build.bat [--non-interactive] [--version 0.1.2] [--notes "版本说明"] [--notes-file path] [--prepare-only]
+echo.
+echo 示例:
+echo   build.bat
+echo   build.bat --non-interactive
+echo   build.bat --non-interactive --version 0.1.2 --notes-file release_notes\template.txt
+echo.
+echo 参数:
+echo   --non-interactive  不提示输入；未指定版本时使用当前版本，未指定说明时生成默认说明。
+echo   --version          指定本次构建版本号。
+echo   --notes            直接指定版本说明文本。
+echo   --notes-file       从 UTF-8 文本文件读取版本说明。
+echo   --prepare-only     只更新版本信息和版本说明，不运行 PyInstaller/Inno Setup。
+exit /b 0
+
+:prepare_release_metadata
+if defined RELEASE_NOTES_ARG if defined RELEASE_NOTES_FILE_ARG (
+    echo [错误] --notes 与 --notes-file 不能同时使用。
+    exit /b 1
+)
+
+if "%BUILD_NON_INTERACTIVE%"=="1" (
+    if defined RELEASE_VERSION_ARG (
+        if defined RELEASE_NOTES_FILE_ARG (
+            "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --non-interactive --version "%RELEASE_VERSION_ARG%" --notes-file "%RELEASE_NOTES_FILE_ARG%"
+            exit /b %errorlevel%
+        )
+        if defined RELEASE_NOTES_ARG (
+            "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --non-interactive --version "%RELEASE_VERSION_ARG%" --notes "%RELEASE_NOTES_ARG%"
+            exit /b %errorlevel%
+        )
+        "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --non-interactive --version "%RELEASE_VERSION_ARG%"
+        exit /b %errorlevel%
+    )
+
+    if defined RELEASE_NOTES_FILE_ARG (
+        "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --non-interactive --notes-file "%RELEASE_NOTES_FILE_ARG%"
+        exit /b %errorlevel%
+    )
+    if defined RELEASE_NOTES_ARG (
+        "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --non-interactive --notes "%RELEASE_NOTES_ARG%"
+        exit /b %errorlevel%
+    )
+    "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --non-interactive
+    exit /b %errorlevel%
+)
+
+if defined RELEASE_VERSION_ARG (
+    if defined RELEASE_NOTES_FILE_ARG (
+        "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --version "%RELEASE_VERSION_ARG%" --notes-file "%RELEASE_NOTES_FILE_ARG%"
+        exit /b %errorlevel%
+    )
+    if defined RELEASE_NOTES_ARG (
+        "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --version "%RELEASE_VERSION_ARG%" --notes "%RELEASE_NOTES_ARG%"
+        exit /b %errorlevel%
+    )
+    "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --version "%RELEASE_VERSION_ARG%"
+    exit /b %errorlevel%
+)
+
+if defined RELEASE_NOTES_FILE_ARG (
+    "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --notes-file "%RELEASE_NOTES_FILE_ARG%"
+    exit /b %errorlevel%
+)
+if defined RELEASE_NOTES_ARG (
+    "%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%" --notes "%RELEASE_NOTES_ARG%"
+    exit /b %errorlevel%
+)
+
+"%PY_EXE%" %PY_ARGS% "%RELEASE_PREPARE_SCRIPT%"
+exit /b %errorlevel%
+
+:maybe_pause
+if not "%BUILD_NON_INTERACTIVE%"=="1" pause
 exit /b 0
 
 :load_version

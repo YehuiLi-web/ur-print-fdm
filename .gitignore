@@ -67,3 +67,4 @@ installer_output/
 release_notes/*
 !release_notes/template.txt
 ur_print_fdm/release_notes/*.txt
+.codex/

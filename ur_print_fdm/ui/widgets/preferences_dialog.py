@@ -134,9 +134,24 @@ class PreferencesDialog(QDialog):
         ui_config["dark_theme"] = True
 
     def _robot_target_items(self) -> dict[str, dict[str, Any]]:
+        robot = self._working_config.get("robot")
+        if isinstance(robot, dict):
+            targets = robot.get("targets")
+            if isinstance(targets, dict):
+                items = targets.get("items")
+                if isinstance(items, dict):
+                    return items
         return get_robot_target_items(self._working_config)
 
     def _active_robot_target_id(self) -> str:
+        robot = self._working_config.get("robot")
+        if isinstance(robot, dict):
+            targets = robot.get("targets")
+            if isinstance(targets, dict):
+                items = targets.get("items")
+                active_id = str(targets.get("active_id", "") or "").strip()
+                if isinstance(items, dict) and active_id in items:
+                    return active_id
         return get_active_robot_target_id(self._working_config)
 
     def _robot_target_label(self, target_id: str) -> str:

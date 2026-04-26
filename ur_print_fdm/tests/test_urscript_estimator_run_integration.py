@@ -3,6 +3,7 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QApplication
 
 from ur_print_fdm.config import config_manager
+from ur_print_fdm.shared.connection_state import ChannelState, ConnectionSnapshot, SessionPhase
 
 
 def _set_run_mode(win, mode: str) -> None:
@@ -23,6 +24,42 @@ def _cleanup_ui_log_handler() -> None:
                 pass
 
 
+class _SignalStub:
+    def connect(self, _callback):
+        return None
+
+
+class _DirectModeProcessorStub:
+    def __init__(self, *_args, **_kwargs):
+        self.log_signal = _SignalStub()
+        self.script_sent_signal = _SignalStub()
+        self.finished_signal = _SignalStub()
+        self.error_signal = _SignalStub()
+
+    def set_action_run(self, _script_content):
+        return None
+
+    def isRunning(self):
+        return False
+
+    def start(self):
+        return None
+
+
+def _stub_direct_mode_processor(monkeypatch) -> None:
+    import ur_print_fdm.ui.controllers.run_controller as run_controller
+
+    monkeypatch.setattr(run_controller, "DirectModeProcessor", _DirectModeProcessorStub)
+
+
+def _direct_run_snapshot() -> ConnectionSnapshot:
+    return ConnectionSnapshot(
+        phase=SessionPhase.ONLINE_MONITOR_ONLY,
+        ip="192.168.1.106",
+        receive=ChannelState.UP,
+    )
+
+
 def test_run_does_not_start_estimate_timer_when_disabled(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
 
@@ -31,11 +68,14 @@ def test_run_does_not_start_estimate_timer_when_disabled(monkeypatch) -> None:
     win = URPrintIDE()
     try:
         _set_run_mode(win, "direct")
+        _stub_direct_mode_processor(monkeypatch)
 
         # Make the app think we're connected and able to send scripts.
         monkeypatch.setattr(win.driver, "is_connected", lambda: True)
         monkeypatch.setattr(win.driver, "is_read_only", lambda: False)
         monkeypatch.setattr(win.driver, "send_script", lambda _s: True)
+        monkeypatch.setattr(win.driver, "get_ip_address", lambda: "192.168.1.106")
+        monkeypatch.setattr(win.driver, "get_connection_snapshot", _direct_run_snapshot)
 
         editor, _ = win.dockable_editor.create_new_tab()
         editor.setPlainText("def a():\n  sleep(0.1)\nend\na()\n")
@@ -77,10 +117,13 @@ def test_run_starts_estimate_timer_when_enabled(monkeypatch) -> None:
     win = URPrintIDE()
     try:
         _set_run_mode(win, "direct")
+        _stub_direct_mode_processor(monkeypatch)
 
         monkeypatch.setattr(win.driver, "is_connected", lambda: True)
         monkeypatch.setattr(win.driver, "is_read_only", lambda: False)
         monkeypatch.setattr(win.driver, "send_script", lambda _s: True)
+        monkeypatch.setattr(win.driver, "get_ip_address", lambda: "192.168.1.106")
+        monkeypatch.setattr(win.driver, "get_connection_snapshot", _direct_run_snapshot)
 
         editor, _ = win.dockable_editor.create_new_tab()
         editor.setPlainText("def a():\n  movel(p[0,0,0,0,0,0], a=1.0, v=0.1)\nend\na()\n")

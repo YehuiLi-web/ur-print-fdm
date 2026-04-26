@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from PyQt6.QtGui import QDesktopServices
+
 from ur_print_fdm.config import config_manager
 from ur_print_fdm.help_center.markdown import Heading, render_markdown_document
 from ur_print_fdm.help_center.note_data import default_printing_notes
@@ -570,7 +572,6 @@ def build_help_center_site(
 
 def open_help_center(*, anchor: str | None = None) -> bool:
     from PyQt6.QtCore import QUrl
-    from PyQt6.QtGui import QDesktopServices
 
     index_path = build_help_center_site()
     url = QUrl.fromLocalFile(str(index_path))

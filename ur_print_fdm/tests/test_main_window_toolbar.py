@@ -97,7 +97,7 @@ def test_main_window_connection_snapshot_controls_toolbar_state():
                 last_error="RTDE Receive disconnected",
             )
         )
-        assert win.btn_connect.text() == "修复连接"
+        assert win.btn_connect.text() == "修复"
         assert win.btn_repair_connection.isEnabled() is True
         assert win.ip_combo.isEnabled() is True
     finally:

@@ -32,10 +32,14 @@ class ThemeAwareMixin:
 
         在组件初始化时调用此方法以订阅主题变更通知
         """
+        if getattr(self, "_theme_awareness_registered", False):
+            return
+
         from ur_print_fdm.ui.theme_manager import get_theme_manager
 
         self._theme_manager = get_theme_manager()
         self._theme_manager.add_listener(self.on_theme_changed)
+        self._theme_awareness_registered = True
 
         # 如果组件有destroyed信号，自动清理
         if hasattr(self, "destroyed"):
@@ -86,7 +90,7 @@ class ThemeAwareMixin:
             return self._theme_manager.current_theme_id()
         return None
 
-    def cleanup_theme_awareness(self):
+    def cleanup_theme_awareness(self, *args):
         """
         清理主题感知（在组件销毁时调用）
 
@@ -95,5 +99,6 @@ class ThemeAwareMixin:
         if hasattr(self, "_theme_manager"):
             try:
                 self._theme_manager.remove_listener(self.on_theme_changed)
+                self._theme_awareness_registered = False
             except Exception:
                 pass  # 可能已经移除

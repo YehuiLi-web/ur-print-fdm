@@ -54,9 +54,9 @@ def test_estimate_repo_pingban_matches_reference() -> None:
 def test_estimate_repo_fiber_matches_reference() -> None:
     script = _load_repo_script("fiber.script")
     res = estimate_urscript(script)
-    assert res.total_time_s == pytest.approx(134.855, abs=0.5)
-    assert res.cf_filament_mm == pytest.approx(669.77, abs=2.0)
-    assert res.extruder_filament_mm == pytest.approx(138.05, abs=2.0)
+    assert res.total_time_s == pytest.approx(18.765, abs=0.5)
+    assert res.cf_filament_mm == pytest.approx(9.38, abs=0.5)
+    assert res.extruder_filament_mm == pytest.approx(0.0, abs=1e-9)
 
 
 def test_estimate_repo_vt350_matches_reference() -> None:

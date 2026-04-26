@@ -115,10 +115,14 @@ def test_sftp_upload_thread_can_upload_and_load(monkeypatch, tmp_path):
     assert "- Dashboard 已加载：/programs/loader.urp" in results[-1][1]
 
     assert len(_FakeSFTPClient.instances) == 1
-    assert _FakeSFTPClient.instances[0].put_calls == [
-        (str(local_file), "/programs/demo.script"),
-        (str(local_file), "/programs/remote_loader.script"),
+    put_calls = _FakeSFTPClient.instances[0].put_calls
+    assert [remote_path for _local_path, remote_path in put_calls] == [
+        "/programs/demo.script",
+        "/programs/remote_loader.script",
     ]
+    uploaded = dict(_FakeSFTPClient.instances[0].uploaded_payloads)
+    assert uploaded["/programs/demo.script"] == b"def demo():\n  pass\n"
+    assert uploaded["/programs/remote_loader.script"] == b"def demo():\n  pass\n"
     assert len(_FakeDashboard.instances) == 1
     assert _FakeDashboard.instances[0].ip == "192.168.1.10"
     assert _FakeDashboard.instances[0].load_calls == ["/programs/loader.urp"]

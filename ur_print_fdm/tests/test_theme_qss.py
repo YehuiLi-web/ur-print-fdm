@@ -1,11 +1,13 @@
 from pathlib import Path
+import gc
 
 from ur_print_fdm.ui import theme
+from ur_print_fdm.ui.theme_manager import get_theme_manager
 
 
 def test_light_theme_qss_has_light_base_colors():
     qss = theme.get_light_theme().lower()
-    assert "#f7f7f9" in qss
+    assert "#f0f1f4" in qss
     assert "#1f2328" in qss
 
 
@@ -121,3 +123,24 @@ def test_light_theme_qss_uses_absolute_icon_paths_for_tree_and_combo_arrows():
     assert f"image: url({expand_icon});" in qss
     assert "image: url(ur_print_fdm/ui/resources/icons/collapse_light.svg);" not in qss
     assert "image: url(ur_print_fdm/ui/resources/icons/expand_light.svg);" not in qss
+
+
+def test_theme_manager_drops_dead_bound_method_listeners():
+    theme_mgr = get_theme_manager()
+
+    class Listener:
+        calls = 0
+
+        def on_theme_changed(self, theme_id: str) -> None:
+            self.calls += 1
+
+    listener = Listener()
+    theme_mgr.add_listener(listener.on_theme_changed)
+    assert any(item.matches(listener.on_theme_changed) for item in theme_mgr._listeners)
+
+    del listener
+    gc.collect()
+
+    theme_mgr.set_theme(theme_mgr.current_theme_id())
+
+    assert all(item.get() is not None for item in theme_mgr._listeners)

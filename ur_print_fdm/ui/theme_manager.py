@@ -4,8 +4,57 @@
 """
 
 from __future__ import annotations
+import weakref
 from typing import Dict, Callable, Optional, Any, List
 from PyQt6.QtWidgets import QApplication
+
+
+class _ThemeListener:
+    """Theme listener wrapper that does not keep QObject-bound methods alive."""
+
+    def __init__(self, callback: Callable[[str], None]):
+        self._strong_callback: Callable[[str], None] | None = None
+        self._weak_callback: weakref.WeakMethod | None = None
+        self._weak_owner: weakref.ref | None = None
+
+        owner = getattr(callback, "__self__", None)
+        if owner is not None:
+            self._weak_owner = weakref.ref(owner)
+            self._weak_callback = weakref.WeakMethod(callback)
+        else:
+            self._strong_callback = callback
+
+    def matches(self, callback: Callable[[str], None]) -> bool:
+        if self._strong_callback is not None:
+            return self._strong_callback == callback
+        if self._weak_callback is None:
+            return False
+        return self._weak_callback() == callback
+
+    def get(self) -> Callable[[str], None] | None:
+        if self._strong_callback is not None:
+            return self._strong_callback
+        if self._weak_callback is None:
+            return None
+        if self._weak_owner is not None:
+            owner = self._weak_owner()
+            if owner is None:
+                return None
+            try:
+                from PyQt6 import sip
+
+                if sip.isdeleted(owner):
+                    return None
+            except Exception:
+                pass
+            try:
+                from PyQt6.QtWidgets import QWidget
+
+                if isinstance(owner, QWidget) and not owner.isVisible():
+                    return None
+            except Exception:
+                pass
+        return self._weak_callback()
 
 
 class ThemeDefinition:
@@ -54,7 +103,7 @@ class ThemeManager:
 
         self._current_theme_id: str = "dark"
         self._themes: Dict[str, ThemeDefinition] = {}
-        self._listeners: List[Callable[[str], None]] = []
+        self._listeners: List[_ThemeListener] = []
 
         # 加载内置主题
         self._load_builtin_themes()
@@ -85,13 +134,14 @@ class ThemeManager:
 
     def add_listener(self, callback: Callable[[str], None]):
         """添加主题变更监听器"""
-        if callback not in self._listeners:
-            self._listeners.append(callback)
+        if not any(listener.matches(callback) for listener in self._listeners):
+            self._listeners.append(_ThemeListener(callback))
 
     def remove_listener(self, callback: Callable[[str], None]):
         """移除主题变更监听器"""
-        if callback in self._listeners:
-            self._listeners.remove(callback)
+        self._listeners = [
+            listener for listener in self._listeners if not listener.matches(callback)
+        ]
 
     def set_theme(self, theme_id: str) -> bool:
         """
@@ -125,11 +175,17 @@ class ThemeManager:
             pass  # IconManager可能还未初始化
 
         # 通知所有订阅者
-        for listener in self._listeners:
+        active_listeners: List[_ThemeListener] = []
+        for listener_ref in self._listeners:
+            listener = listener_ref.get()
+            if listener is None:
+                continue
+            active_listeners.append(listener_ref)
             try:
                 listener(theme_id)
             except Exception:
                 pass  # 忽略监听器错误
+        self._listeners = active_listeners
 
         return True
 

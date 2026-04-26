@@ -1,5 +1,6 @@
 import copy
 import logging
+from unittest.mock import patch
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
@@ -119,10 +120,10 @@ def test_main_window_status_dock_collapses_after_dragging_past_min_width():
             def x(self):
                 return self._x
 
-        win._maybe_collapse_status_dock_from_drag(_Point(140))
-        assert win._status_dock_collapsed is False
-
-        win._maybe_collapse_status_dock_from_drag(_Point(140 + win.STATUS_DOCK_COLLAPSE_DRAG_DISTANCE + 1))
+        with patch.object(win.dock_status, "width", return_value=StatusWidget.COMPACT_MINIMUM_WIDTH):
+            win._maybe_collapse_status_dock_from_drag(_Point(140))
+            assert win._status_dock_collapsed is False
+            win._maybe_collapse_status_dock_from_drag(_Point(140 + win.STATUS_DOCK_COLLAPSE_DRAG_DISTANCE + 1))
         app.processEvents()
 
         assert win._status_dock_collapsed is True

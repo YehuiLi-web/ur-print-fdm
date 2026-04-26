@@ -69,6 +69,7 @@ def test_preferences_dialog_switch_robot_target_preserves_each_profile():
 
     try:
         dlg = PreferencesDialog()
+        dlg._switch_robot_target("virtual")
 
         dlg._set("robot.sftp.password", "virtual-pass")
         dlg._switch_robot_target("real")
